@@ -785,25 +785,36 @@ async function initializeSupabase() {
 async function handleAuthSubmit(event) {
   event.preventDefault();
   if (!supabaseClient) {
-    showToast("Save Supabase settings first");
-    return;
+    await initializeSupabase();
+    if (!supabaseClient) {
+      renderAuth("Supabase is not configured. Add SUPABASE_URL and SUPABASE_ANON_KEY in Vercel, redeploy, or paste them in Settings.");
+      showToast("Supabase is not configured");
+      return;
+    }
   }
 
   const action = event.submitter?.dataset.authAction || "signin";
   const formData = Object.fromEntries(new FormData(event.currentTarget).entries());
   const credentials = { email: formData.email.trim(), password: formData.password };
+  if (!credentials.email || !credentials.password) {
+    renderAuth("Enter an email and password.");
+    return;
+  }
+
+  renderAuth(action === "signup" ? "Creating account..." : "Logging in...");
   const signupOptions = location.origin.startsWith("http") ? { options: { emailRedirectTo: location.origin } } : {};
-  const request = action === "signup" ? supabaseClient.auth.signUp({ ...credentials, ...signupOptions }) : supabaseClient.auth.signInWithPassword(credentials);
-  const { data, error } = await request;
+  const { data, error } =
+    action === "signup" ? await supabaseClient.auth.signUp({ ...credentials, ...signupOptions }) : await supabaseClient.auth.signInWithPassword(credentials);
 
   if (error) {
+    renderAuth(error.message);
     showToast(error.message);
     return;
   }
 
   authUser = data.session?.user || data.user || authUser;
   event.currentTarget.reset();
-  renderAuth();
+  renderAuth(action === "signup" && !data.session ? "Check your email to confirm signup." : "");
   if (authUser) await syncWithCloud();
   showToast(action === "signup" && !data.session ? "Check your email to confirm signup" : "Logged in");
 }
