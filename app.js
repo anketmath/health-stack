@@ -6,10 +6,11 @@ const initialState = {
   entries: [],
   chat: [],
   workoutDraft: null,
-  oura: { lastSync: "", records: [] },
+  oura: { lastSync: "", lastSyncAt: "", lastSyncAttemptAt: "", records: [] },
   settings: {
     socialDefinition: DEFAULT_SOCIAL_DEFINITION,
     reminders: { sleep: "08:00", midday: "13:00", dinner: "19:00", endOfDay: "21:30" },
+    oura: { autoSync: true, intervalHours: 6, days: 14 },
   },
   profile: {
     age: "",
@@ -35,6 +36,7 @@ let supabaseClient = null;
 let authUser = null;
 let authSubscription = null;
 let supabaseCacheKey = "";
+let ouraSyncTimer = null;
 
 const views = {
   dashboard: document.querySelector("#dashboardView"),
@@ -93,7 +95,12 @@ function normalizeState(saved) {
     chat: Array.isArray(saved.chat) ? saved.chat : [],
     workoutDraft: saved.workoutDraft || null,
     oura: { ...initialState.oura, ...(saved.oura || {}) },
-    settings: { ...initialState.settings, ...(saved.settings || {}) },
+    settings: {
+      ...initialState.settings,
+      ...(saved.settings || {}),
+      reminders: { ...initialState.settings.reminders, ...(saved.settings?.reminders || {}) },
+      oura: { ...initialState.settings.oura, ...(saved.settings?.oura || {}) },
+    },
     profile: { ...initialState.profile, ...(saved.profile || {}) },
     cloud: { ...initialState.cloud, ...(saved.cloud || {}) },
   };
@@ -195,7 +202,13 @@ function setupForms() {
 
   document.querySelector("#ouraForm").addEventListener("submit", (event) => {
     event.preventDefault();
-    syncOura(Number(Object.fromEntries(new FormData(event.currentTarget).entries()).days) || 14);
+    saveOuraSettings(event.currentTarget);
+    syncOura(state.settings.oura.days, { force: true });
+  });
+
+  document.querySelector("#ouraForm").addEventListener("change", (event) => {
+    saveOuraSettings(event.currentTarget);
+    showToast("Oura sync settings saved");
   });
 
   document.querySelector("#socialDefinitionForm").addEventListener("submit", (event) => {
@@ -1045,64 +1058,81 @@ function renderDashboard() {
   const medMinutes = (byType.meditation || []).reduce((total, entry) => total + (Number(entry.fields?.minutes) || 0), 0);
   const sleep = (byType.sleep || [])[0];
   const social = (byType.social || []).find((entry) => entry.fields?.abstained) || (byType.social || [])[0];
+  const exerciseLogged = (byType.exercise || []).length > 0;
+  const dietStatus = dietStatusFor(nutrition, meals, selectedDashboardDate);
+  const sleepStatus = sleepStatusFor(sleep, selectedOura);
+  const readinessStatus = readinessStatusFor(selectedOura);
 
-  const cards = [
-    ...(profileIsSparse()
-      ? [
-          {
-            title: "Profile setup",
-            value: "Incomplete",
-            detail: "Add age, body metrics, goals, equipment, and sleep stack for better suggestions.",
-            tone: "gold",
-            items: [],
-          },
-        ]
-      : []),
+  const inputs = [
     {
       title: "Exercise",
-      value: `${(byType.exercise || []).length} logs`,
-      detail: `${streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "exercise"))} day streak as of this day`,
-      tone: "green",
-      items: rawItems(byType.exercise, "No exercise logged."),
+      status: exerciseLogged ? "green" : "red",
+      value: exerciseLogged ? "Logged" : "Open",
+      metric: `${(byType.exercise || []).length || 0}`,
+      metricLabel: "logs",
+      streak: streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "exercise")),
+      items: rawItems(byType.exercise),
     },
     {
-      title: "Meals and nutrition",
-      value: meals.length ? `${nutrition.calories} cal` : "No meals",
-      detail: `${nutrition.protein}g protein · ${nutrition.carbs}g carbs · ${nutrition.fat}g fat`,
-      tone: "gold",
-      items: rawItems(meals, "No meals logged."),
-    },
-    {
-      title: "Sleep",
-      value: sleep?.fields?.quality ? `${sleep.fields.quality}/10` : selectedOura?.dailySleep?.score ? `${selectedOura.dailySleep.score}/100 Oura` : "No score",
-      detail: `${streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "sleep"))} day subjective streak`,
-      tone: Number(sleep?.fields?.quality) <= 5 ? "rose" : "blue",
-      items: sleepItems(sleep, selectedOura),
+      title: "Diet",
+      status: dietStatus.status,
+      value: dietStatus.label,
+      metric: `${nutrition.calories || 0}`,
+      metricLabel: "cal",
+      streak: streakAsOf(selectedDashboardDate, (date) => dietStatusFor(nutritionTotals(state.entries.filter((entry) => entry.date === date && entry.type === "meal")), state.entries.filter((entry) => entry.date === date && entry.type === "meal"), date).status === "green"),
+      items: [`${nutrition.protein || 0}g protein`, `${nutrition.carbs || 0}g carbs`, `${nutrition.fat || 0}g fat`],
     },
     {
       title: "Meditation",
-      value: medMinutes ? `${medMinutes} min` : "No minutes",
-      detail: `${streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "meditation"))} day streak as of this day`,
-      tone: "green",
-      items: rawItems(byType.meditation, "No meditation logged."),
+      status: medMinutes > 0 ? "green" : "red",
+      value: medMinutes > 0 ? "Done" : "Open",
+      metric: `${medMinutes || 0}`,
+      metricLabel: "min",
+      streak: streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "meditation")),
+      items: rawItems(byType.meditation),
     },
     {
-      title: "Social abstinence",
-      value: social ? (social.fields?.abstained ? "Abstained" : "Not abstained") : "No log",
-      detail: `${streakAsOf(selectedDashboardDate, (date) => hasSocialAbstainedOnDate(date))} day streak as of this day`,
-      tone: social?.fields?.abstained ? "blue" : "gold",
-      items: rawItems(byType.social, "No social media log."),
-    },
-    {
-      title: "Oura activity",
-      value: selectedOura?.dailyReadiness?.score ? `${selectedOura.dailyReadiness.score}/100 readiness` : "No Oura data",
-      detail: selectedOura?.dailyActivity ? `${selectedOura.dailyActivity.steps || 0} steps · ${selectedOura.dailyActivity.active_calories || 0} active cal` : state.oura.lastSync ? `Last synced ${state.oura.lastSync}` : "Sync Oura in settings.",
-      tone: selectedOura?.dailyReadiness?.score && selectedOura.dailyReadiness.score < 65 ? "gold" : "blue",
-      items: ouraItems(selectedOura),
+      title: "Digital Minimalism",
+      status: social?.fields?.abstained ? "green" : social ? "red" : "yellow",
+      value: social?.fields?.abstained ? "Clear" : social ? "Used" : "Unset",
+      metric: social?.fields?.abstained ? "Yes" : social ? "No" : "-",
+      metricLabel: "today",
+      streak: streakAsOf(selectedDashboardDate, (date) => hasSocialAbstainedOnDate(date)),
+      items: social?.fields?.abstained ? ["Abstained"] : social ? ["Not abstained"] : [],
     },
   ];
 
-  document.querySelector("#dashboardGrid").innerHTML = cards.map(renderDashboardCard).join("");
+  const outcomes = [
+    {
+      title: "Sleep Quality",
+      status: sleepStatus.status,
+      value: sleepStatus.label,
+      metric: sleepStatus.metric,
+      metricLabel: sleepStatus.metricLabel,
+      streak: streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "sleep")),
+      items: sleepItems(sleep, selectedOura),
+    },
+    {
+      title: "Readiness",
+      status: readinessStatus.status,
+      value: readinessStatus.label,
+      metric: readinessStatus.metric,
+      metricLabel: readinessStatus.metricLabel,
+      streak: streakAsOf(selectedDashboardDate, (date) => Boolean(ouraRecordFor(date)?.dailyReadiness?.score)),
+      items: readinessStatus.items,
+    },
+  ];
+
+  document.querySelector("#dashboardGrid").innerHTML = `
+    ${profileIsSparse() ? renderDashboardNotice() : ""}
+    <section class="dashboard-section">
+      <div class="dashboard-section-rule"></div>
+      <div class="dashboard-card-row">${inputs.map(renderDashboardCard).join("")}</div>
+    </section>
+    <section class="dashboard-section">
+      <div class="dashboard-section-rule"></div>
+      <div class="dashboard-card-row dashboard-card-row-outcomes">${outcomes.map(renderDashboardCard).join("")}</div>
+    </section>`;
 }
 
 function profileIsSparse() {
@@ -1158,42 +1188,114 @@ function streakAsOf(date, isActive) {
   return streak;
 }
 
-function rawItems(entries = [], emptyText) {
-  if (!entries.length) return [emptyText];
+function rawItems(entries = []) {
   return entries.map((entry) => entry.rawText);
+}
+
+function dietStatusFor(nutrition, meals, date) {
+  if (!meals.length) return { status: isEarlyToday(date) ? "yellow" : "red", label: "Open" };
+  const proteinTarget = proteinTargetGrams();
+  const calorieTarget = calorieTargetEstimate();
+  const expectedProtein = date === today() ? proteinTarget * dayProgress() : proteinTarget * 0.75;
+  const proteinGood = nutrition.protein >= expectedProtein * 0.85;
+  const caloriesHigh = nutrition.calories > calorieTarget * 1.12;
+  const caloriesLow = date !== today() && nutrition.calories < calorieTarget * 0.55;
+  if (proteinGood && !caloriesHigh && !caloriesLow) return { status: "green", label: "On track" };
+  if (caloriesHigh || caloriesLow) return { status: "red", label: "Check" };
+  return { status: "yellow", label: "Partial" };
+}
+
+function proteinTargetGrams() {
+  const weight = Number(state.profile.weight);
+  if (Number.isFinite(weight) && weight > 0) return Math.round(weight * 0.75);
+  return 120;
+}
+
+function calorieTargetEstimate() {
+  const weight = Number(state.profile.weight);
+  const base = Number.isFinite(weight) && weight > 0 ? weight * 13 : 2100;
+  const goal = `${state.profile.goal || ""}`.toLowerCase();
+  if (/fat|cut|loss|lean/i.test(goal)) return Math.round(base * 0.88);
+  if (/gain|bulk|hypertrophy|muscle/i.test(goal)) return Math.round(base * 1.08);
+  return Math.round(base);
+}
+
+function dayProgress() {
+  const now = new Date();
+  const hour = now.getHours() + now.getMinutes() / 60;
+  return Math.min(Math.max((hour - 7) / 15, 0.2), 1);
+}
+
+function isEarlyToday(date) {
+  return date === today() && new Date().getHours() < 13;
+}
+
+function sleepStatusFor(sleep, oura) {
+  const subjective = Number(sleep?.fields?.quality);
+  if (Number.isFinite(subjective)) {
+    return {
+      status: subjective >= 7 ? "green" : subjective >= 5 ? "yellow" : "red",
+      label: subjective >= 7 ? "Rested" : subjective >= 5 ? "Mixed" : "Low",
+      metric: `${subjective}/10`,
+      metricLabel: "subjective",
+    };
+  }
+  const ouraScore = Number(oura?.dailySleep?.score);
+  if (Number.isFinite(ouraScore)) {
+    return {
+      status: ouraScore >= 80 ? "green" : ouraScore >= 65 ? "yellow" : "red",
+      label: ouraScore >= 80 ? "Strong" : ouraScore >= 65 ? "Mixed" : "Low",
+      metric: `${ouraScore}`,
+      metricLabel: "Oura",
+    };
+  }
+  return { status: "yellow", label: "Unset", metric: "-", metricLabel: "score" };
+}
+
+function readinessStatusFor(oura) {
+  const score = Number(oura?.dailyReadiness?.score);
+  if (!Number.isFinite(score)) return { status: "yellow", label: "Unset", metric: "-", metricLabel: "readiness", items: [] };
+  return {
+    status: score >= 80 ? "green" : score >= 65 ? "yellow" : "red",
+    label: score >= 80 ? "Ready" : score >= 65 ? "Steady" : "Recover",
+    metric: `${score}`,
+    metricLabel: "Oura",
+    items: [],
+  };
 }
 
 function sleepItems(sleep, oura) {
   const items = [];
   if (sleep) {
-    items.push(`Subjective sleep quality: ${sleep.fields?.quality || "-"} / 10`);
+    items.push(`Subjective ${sleep.fields?.quality || "-"} / 10`);
     if (sleep.fields?.pills) items.push("Pre-bed supplement stack logged");
   }
-  if (oura?.dailySleep) items.push(`Oura sleep score ${oura.dailySleep.score || "-"} · ${Math.round((oura.dailySleep.total_sleep_duration || 0) / 3600)}h sleep`);
-  if (oura?.dailyReadiness) items.push(`Oura readiness ${oura.dailyReadiness.score || "-"}/100`);
-  if (!items.length) items.push("No sleep logged.");
+  if (oura?.dailySleep) items.push(`Oura sleep score ${oura.dailySleep.score || "-"}`);
   return items;
 }
 
-function ouraItems(oura) {
-  if (!oura) return ["No Oura data for this day."];
-  return [
-    oura.dailyActivity ? `Activity: ${oura.dailyActivity.steps || 0} steps, ${oura.dailyActivity.active_calories || 0} active calories` : "",
-    oura.dailyReadiness ? `Readiness: ${oura.dailyReadiness.score || "-"} / 100` : "",
-    oura.dailySleep ? `Sleep: ${oura.dailySleep.score || "-"} / 100` : "",
-  ].filter(Boolean);
+function renderDashboardNotice() {
+  return `<article class="dashboard-notice">
+    <strong>Profile setup</strong>
+    <span>Add body metrics, goals, equipment, and sleep stack for sharper suggestions.</span>
+  </article>`;
 }
 
 function renderDashboardCard(card) {
-  return `<article class="dashboard-card" data-tone="${escapeHtml(card.tone)}">
-    <div class="section-title">
+  return `<article class="dashboard-card" data-status="${escapeHtml(card.status)}">
+    <div class="dashboard-card-head">
       <h3>${escapeHtml(card.title)}</h3>
+      <span class="status-light" aria-hidden="true"></span>
     </div>
-    <strong>${escapeHtml(card.value)}</strong>
-    <p>${escapeHtml(card.detail)}</p>
-    <ul class="dashboard-list">
-      ${(card.items || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
-    </ul>
+    <div class="dashboard-primary">
+      <strong>${escapeHtml(card.value)}</strong>
+      <span class="streak-badge"><b>${escapeHtml(card.streak || 0)}</b><small>d streak</small></span>
+    </div>
+    <div class="dashboard-metric">
+      <span>${escapeHtml(card.metric)}</span>
+      <small>${escapeHtml(card.metricLabel)}</small>
+    </div>
+    ${(card.items || []).length ? `<ul class="dashboard-list">${card.items.slice(0, 3).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
   </article>`;
 }
 
@@ -1345,6 +1447,9 @@ function renderChat() {
 function renderSettings() {
   const form = document.querySelector("#ouraForm");
   form.lastSync.value = state.oura.lastSync || "";
+  form.days.value = state.settings.oura?.days || 14;
+  form.intervalHours.value = state.settings.oura?.intervalHours || 6;
+  form.autoSync.checked = state.settings.oura?.autoSync !== false;
   const profileForm = document.querySelector("#profileForm");
   Object.entries(state.profile).forEach(([key, value]) => {
     if (profileForm.elements[key]) profileForm.elements[key].value = value || "";
@@ -1356,23 +1461,44 @@ function renderSettings() {
   document.querySelector("#socialDefinitionInput").value = state.settings.socialDefinition || DEFAULT_SOCIAL_DEFINITION;
 }
 
-async function syncOura(days = 14) {
+function saveOuraSettings(form) {
+  const data = Object.fromEntries(new FormData(form).entries());
+  state.settings.oura = {
+    autoSync: data.autoSync === "yes",
+    intervalHours: Math.min(Math.max(Number(data.intervalHours) || 6, 1), 24),
+    days: Math.min(Math.max(Number(data.days) || 14, 1), 90),
+  };
+  saveState();
+  syncProfileToCloud();
+  scheduleOuraAutoSync();
+}
+
+async function syncOura(days = 14, options = {}) {
   const safeDays = Math.min(Math.max(Number(days) || 14, 1), 90);
-  showToast("Syncing Oura...");
+  if (!isHostedApp()) {
+    if (!options.silent) showToast("Oura sync runs on the deployed app");
+    return;
+  }
+  if (!options.silent) showToast("Syncing Oura...");
   try {
+    state.oura.lastSyncAttemptAt = new Date().toISOString();
+    saveState();
     const response = await fetch(`/api/oura-sync?days=${safeDays}`);
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || "Oura sync failed");
     state.oura = {
       lastSync: today(),
+      lastSyncAt: new Date().toISOString(),
       records: mergeOuraRecords(state.oura.records || [], data.records || []),
     };
     saveState();
     render();
     await syncProfileToCloud();
-    showToast(`Oura synced: ${data.records?.length || 0} days`);
+    if (!options.silent) showToast(`Oura synced: ${data.records?.length || 0} days`);
   } catch (error) {
-    showToast(error.message);
+    if (!options.silent) showToast(error.message);
+  } finally {
+    scheduleOuraAutoSync();
   }
 }
 
@@ -1380,6 +1506,23 @@ function mergeOuraRecords(existing, incoming) {
   const byDate = new Map(existing.map((record) => [record.date, record]));
   incoming.forEach((record) => byDate.set(record.date, record));
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date)).slice(-180);
+}
+
+function scheduleOuraAutoSync() {
+  window.clearTimeout(ouraSyncTimer);
+  ouraSyncTimer = null;
+  const settings = state.settings.oura || initialState.settings.oura;
+  if (!settings.autoSync || !isHostedApp()) return;
+  const intervalMs = Math.min(Math.max(Number(settings.intervalHours) || 6, 1), 24) * 60 * 60 * 1000;
+  const lastSyncTime = Date.parse(state.oura.lastSyncAt || state.oura.lastSyncAttemptAt || "");
+  const delay = Number.isFinite(lastSyncTime) ? Math.max(lastSyncTime + intervalMs - Date.now(), 0) : 0;
+  ouraSyncTimer = window.setTimeout(() => {
+    syncOura(settings.days || 14, { silent: true });
+  }, delay);
+}
+
+function isHostedApp() {
+  return location.protocol === "http:" || location.protocol === "https:";
 }
 
 function render() {
@@ -1692,6 +1835,7 @@ async function bootstrapCloud() {
   await loadRemoteConfig();
   render();
   await initializeSupabase();
+  scheduleOuraAutoSync();
 }
 
 setupNavigation();
@@ -1700,4 +1844,5 @@ setupDataActions();
 prepareDefaults();
 render();
 scheduleReminders();
+scheduleOuraAutoSync();
 bootstrapCloud();

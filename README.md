@@ -51,7 +51,8 @@ The app saves locally first, then upserts to `public.health_entries` when logged
 1. In Oura Cloud, create a personal access token.
 2. In Vercel, add it as `OURA_PERSONAL_ACCESS_TOKEN`.
 3. Redeploy the app.
-4. Open the deployed app, go to Settings, and use Oura connection -> Sync Oura.
+4. Open the deployed app, go to Settings, and use Oura connection -> Sync now.
+5. Leave auto-sync enabled to refresh Oura every 6 hours while the app is open. You can change the interval or force a manual sync from the same settings row.
 
 The token is only read by `/api/oura-sync` on Vercel. It is not shown or stored in the browser.
 
