@@ -6,6 +6,7 @@ const initialState = {
   entries: [],
   chat: [],
   workoutDraft: null,
+  dietTargets: {},
   oura: { lastSync: "", lastSyncAt: "", lastSyncAttemptAt: "", records: [] },
   settings: {
     socialDefinition: DEFAULT_SOCIAL_DEFINITION,
@@ -37,6 +38,7 @@ let authUser = null;
 let authSubscription = null;
 let supabaseCacheKey = "";
 let ouraSyncTimer = null;
+const dietTargetRequests = new Set();
 
 const views = {
   dashboard: document.querySelector("#dashboardView"),
@@ -94,6 +96,7 @@ function normalizeState(saved) {
     ...saved,
     chat: Array.isArray(saved.chat) ? saved.chat : [],
     workoutDraft: saved.workoutDraft || null,
+    dietTargets: saved.dietTargets || {},
     oura: { ...initialState.oura, ...(saved.oura || {}) },
     settings: {
       ...initialState.settings,
@@ -1055,47 +1058,54 @@ function renderDashboard() {
   const selectedOura = ouraRecordFor(selectedDashboardDate);
   const meals = byType.meal || [];
   const nutrition = nutritionTotals(meals);
+  const dietTarget = dietTargetForDate(selectedDashboardDate);
   const medMinutes = (byType.meditation || []).reduce((total, entry) => total + (Number(entry.fields?.minutes) || 0), 0);
   const sleep = (byType.sleep || [])[0];
   const social = (byType.social || []).find((entry) => entry.fields?.abstained) || (byType.social || [])[0];
   const exerciseLogged = (byType.exercise || []).length > 0;
-  const dietStatus = dietStatusFor(nutrition, meals, selectedDashboardDate);
+  const dietChecked = dietInTarget(nutrition, meals, dietTarget);
   const exerciseStreak = streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "exercise"));
   const meditationStreak = streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "meditation"));
   const digitalStreak = streakAsOf(selectedDashboardDate, (date) => hasSocialAbstainedOnDate(date));
+  const dietStreak = streakAsOf(selectedDashboardDate, (date) => {
+    const dateMeals = state.entries.filter((entry) => entry.date === date && entry.type === "meal");
+    return dietInTarget(nutritionTotals(dateMeals), dateMeals, dietTargetForDate(date));
+  });
 
-  const inputs = [
+  const cards = [
     {
       title: "Exercise",
       status: exerciseLogged ? "green" : "red",
-      metric: "",
+      summary: `${exerciseStreak}d streak`,
+      streak: exerciseStreak,
       items: exerciseItems(byType.exercise),
     },
     {
       title: "Diet",
-      status: dietStatus.status,
-      metric: `${nutrition.calories || 0} cal · ${nutrition.protein || 0}g protein`,
-      items: [],
+      status: dietChecked ? "green" : meals.length ? "yellow" : "red",
+      summary: `${nutrition.calories || 0} cal · ${nutrition.protein || 0}g protein`,
+      streak: dietStreak,
+      items: dietItems(nutrition, dietTarget),
     },
     {
       title: "Meditation",
       status: medMinutes > 0 ? "green" : "red",
-      metric: `${medMinutes || 0} min`,
+      summary: `${meditationStreak}d streak · ${medMinutes || 0} min`,
+      streak: meditationStreak,
       items: rawItems(byType.meditation),
     },
     {
       title: "Digital Minimalism",
       status: social?.fields?.abstained ? "green" : social ? "red" : "yellow",
-      metric: social?.fields?.abstained ? "Abstained" : social ? "Used" : "Not set",
+      summary: `${digitalStreak}d streak`,
+      streak: digitalStreak,
       items: social?.fields?.abstained ? ["Abstained"] : social ? ["Not abstained"] : [],
     },
-  ];
-
-  const outcomes = [
     {
       title: "Sleep and readiness",
       status: combinedSleepStatus(sleep, selectedOura),
-      metric: "",
+      summary: "Subjective · Oura sleep · Readiness",
+      noStreak: true,
       values: [
         { label: "Subjective sleep", value: sleep?.fields?.quality ? `${sleep.fields.quality}/10` : "-" },
         { label: "Oura sleep", value: selectedOura?.dailySleep?.score ? `${selectedOura.dailySleep.score}` : "-" },
@@ -1107,19 +1117,8 @@ function renderDashboard() {
 
   document.querySelector("#dashboardGrid").innerHTML = `
     ${profileIsSparse() ? renderDashboardNotice() : ""}
-    ${renderMomentumSummary([
-      { title: "Exercise", status: exerciseLogged ? "green" : "red", streak: exerciseStreak },
-      { title: "Meditation", status: medMinutes > 0 ? "green" : "red", streak: meditationStreak },
-      { title: "Digital Minimalism", status: social?.fields?.abstained ? "green" : social ? "red" : "yellow", streak: digitalStreak },
-    ])}
-    <section class="dashboard-section">
-      <div class="dashboard-section-rule"></div>
-      <div class="dashboard-card-row">${sortDashboardCards(inputs).map(renderDashboardCard).join("")}</div>
-    </section>
-    <section class="dashboard-section">
-      <div class="dashboard-section-rule"></div>
-      <div class="dashboard-card-row dashboard-card-row-outcomes">${sortDashboardCards(outcomes).map(renderDashboardCard).join("")}</div>
-    </section>`;
+    <section class="scorecard-grid">${sortDashboardCards(cards).map(renderScorecard).join("")}</section>`;
+  ensureDietTargetForDate(selectedDashboardDate);
 }
 
 function profileIsSparse() {
@@ -1179,6 +1178,61 @@ function rawItems(entries = []) {
   return entries.map((entry) => entry.rawText);
 }
 
+function dietTargetForDate(date) {
+  return state.dietTargets?.[date] || localDietTarget(date);
+}
+
+function localDietTarget(date) {
+  const calories = calorieTargetEstimateForDate(date);
+  const protein = proteinTargetGrams();
+  return {
+    source: "Local estimate",
+    calories: { min: Math.round(calories * 0.9), max: Math.round(calories * 1.1) },
+    protein: { min: Math.round(protein * 0.9), max: Math.round(protein * 1.15) },
+    reasoning: "Estimated from profile goal, body weight, and logged exercise for the selected day.",
+  };
+}
+
+function dietInTarget(nutrition, meals, target) {
+  if (!meals.length || !target) return false;
+  return nutrition.calories >= target.calories.min && nutrition.calories <= target.calories.max && nutrition.protein >= target.protein.min && nutrition.protein <= target.protein.max;
+}
+
+function dietItems(nutrition, target) {
+  return [
+    `Target: ${target.calories.min}-${target.calories.max} cal · ${target.protein.min}-${target.protein.max}g protein`,
+    `${target.source || "Target"}: ${target.reasoning || "Based on profile, goal, and selected-day exercise."}`,
+    `Actual: ${nutrition.calories || 0} cal · ${nutrition.protein || 0}g protein`,
+  ];
+}
+
+async function ensureDietTargetForDate(date) {
+  if (!isHostedApp() || state.dietTargets?.[date] || dietTargetRequests.has(date)) return;
+  dietTargetRequests.add(date);
+  try {
+    const entries = state.entries.filter((entry) => entry.date === date);
+    const response = await fetch("/api/diet-target", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        date,
+        profile: state.profile,
+        entries,
+        nutrition: nutritionTotals(entries.filter((entry) => entry.type === "meal")),
+        exercise: entries.filter((entry) => entry.type === "exercise"),
+        oura: ouraRecordFor(date),
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.target) return;
+    state.dietTargets = { ...(state.dietTargets || {}), [date]: data.target };
+    saveState();
+    if (date === selectedDashboardDate) renderDashboard();
+  } finally {
+    dietTargetRequests.delete(date);
+  }
+}
+
 function exerciseItems(entries = []) {
   return entries.map((entry) => exerciseSummary(entry));
 }
@@ -1209,19 +1263,6 @@ function sortDashboardCards(cards) {
     .sort((a, b) => (rank[a.status] ?? 3) - (rank[b.status] ?? 3) || (b.streak || 0) - (a.streak || 0) || a.index - b.index);
 }
 
-function dietStatusFor(nutrition, meals, date) {
-  if (!meals.length) return { status: isEarlyToday(date) ? "yellow" : "red", label: "Open" };
-  const proteinTarget = proteinTargetGrams();
-  const calorieTarget = calorieTargetEstimate();
-  const expectedProtein = date === today() ? proteinTarget * dayProgress() : proteinTarget * 0.75;
-  const proteinGood = nutrition.protein >= expectedProtein * 0.85;
-  const caloriesHigh = nutrition.calories > calorieTarget * 1.12;
-  const caloriesLow = date !== today() && nutrition.calories < calorieTarget * 0.55;
-  if (proteinGood && !caloriesHigh && !caloriesLow) return { status: "green", label: "On track" };
-  if (caloriesHigh || caloriesLow) return { status: "red", label: "Check" };
-  return { status: "yellow", label: "Partial" };
-}
-
 function proteinTargetGrams() {
   const weight = Number(state.profile.weight);
   if (Number.isFinite(weight) && weight > 0) return Math.round(weight * 0.75);
@@ -1229,22 +1270,18 @@ function proteinTargetGrams() {
 }
 
 function calorieTargetEstimate() {
+  return calorieTargetEstimateForDate(today());
+}
+
+function calorieTargetEstimateForDate(date) {
   const weight = Number(state.profile.weight);
   const base = Number.isFinite(weight) && weight > 0 ? weight * 13 : 2100;
   const goal = `${state.profile.goal || ""}`.toLowerCase();
-  if (/fat|cut|loss|lean/i.test(goal)) return Math.round(base * 0.88);
-  if (/gain|bulk|hypertrophy|muscle/i.test(goal)) return Math.round(base * 1.08);
-  return Math.round(base);
-}
-
-function dayProgress() {
-  const now = new Date();
-  const hour = now.getHours() + now.getMinutes() / 60;
-  return Math.min(Math.max((hour - 7) / 15, 0.2), 1);
-}
-
-function isEarlyToday(date) {
-  return date === today() && new Date().getHours() < 13;
+  const exerciseEntries = state.entries.filter((entry) => entry.date === date && entry.type === "exercise");
+  const exerciseBump = Math.min(estimateExerciseCalories(exerciseEntries) * 0.35, 350);
+  if (/fat|cut|loss|lean/i.test(goal)) return Math.round(base * 0.88 + exerciseBump);
+  if (/gain|bulk|hypertrophy|muscle/i.test(goal)) return Math.round(base * 1.08 + exerciseBump);
+  return Math.round(base + exerciseBump);
 }
 
 function combinedSleepStatus(sleep, oura) {
@@ -1263,20 +1300,6 @@ function combinedSleepStatus(sleep, oura) {
   return "red";
 }
 
-function renderMomentumSummary(items) {
-  return `<section class="momentum-summary">
-    ${items
-      .map(
-        (item) => `<article class="momentum-pill" data-status="${escapeHtml(item.status)}">
-          <span class="status-mark" aria-label="${escapeHtml(item.status === "green" ? "Complete" : item.status)}">${item.status === "green" ? "✓" : ""}</span>
-          <strong>${escapeHtml(item.title)}</strong>
-          <span class="momentum-streak">${escapeHtml(item.streak || 0)}d streak</span>
-        </article>`,
-      )
-      .join("")}
-  </section>`;
-}
-
 function renderDashboardNotice() {
   return `<article class="dashboard-notice">
     <strong>Profile setup</strong>
@@ -1284,12 +1307,21 @@ function renderDashboardNotice() {
   </article>`;
 }
 
-function renderDashboardCard(card) {
-  return `<article class="dashboard-card" data-status="${escapeHtml(card.status)}">
-    <h3>${escapeHtml(card.title)}</h3>
-    ${card.values ? renderDashboardValues(card.values) : card.metric ? `<div class="dashboard-metric">${escapeHtml(card.metric)}</div>` : ""}
-    ${(card.items || []).length ? `<ul class="dashboard-list">${card.items.slice(0, 3).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
-  </article>`;
+function renderScorecard(card) {
+  return `<details class="scorecard" data-status="${escapeHtml(card.status)}">
+    <summary>
+      <span class="status-mark" aria-label="${escapeHtml(card.status === "green" ? "Complete" : card.status)}">${card.status === "green" ? "✓" : ""}</span>
+      <span class="scorecard-title">
+        <strong>${escapeHtml(card.title)}</strong>
+        <small>${escapeHtml(card.summary || "")}</small>
+      </span>
+      ${card.noStreak ? "" : `<span class="streak-chip"><small>Streak</small><b>${escapeHtml(card.streak || 0)}d</b></span>`}
+    </summary>
+    <div class="scorecard-detail">
+      ${card.values ? renderDashboardValues(card.values) : ""}
+      ${(card.items || []).length ? `<ul class="dashboard-list">${card.items.slice(0, 4).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
+    </div>
+  </details>`;
 }
 
 function renderDashboardValues(values) {

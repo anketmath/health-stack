@@ -431,6 +431,71 @@ label,
   white-space: nowrap;
 }
 
+.scorecard-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.scorecard {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 5px solid #9aa39f;
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.scorecard[data-status="green"] {
+  border-left-color: var(--green);
+}
+
+.scorecard[data-status="yellow"] {
+  border-left-color: var(--gold);
+}
+
+.scorecard[data-status="red"] {
+  border-left-color: var(--rose);
+}
+
+.scorecard summary {
+  list-style: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+}
+
+.scorecard summary::-webkit-details-marker {
+  display: none;
+}
+
+.scorecard-title {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.scorecard-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scorecard-title small {
+  color: var(--muted);
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.scorecard-detail {
+  border-top: 1px solid var(--line);
+  padding: 12px 14px 14px;
+  display: grid;
+  gap: 10px;
+}
+
 .dashboard-card-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -481,19 +546,19 @@ label,
   flex: 0 0 auto;
 }
 
-.dashboard-card[data-status="green"] .status-mark {
+[data-status="green"] .status-mark {
   background: var(--green);
   box-shadow: 0 0 0 4px rgba(37, 108, 84, 0.14);
 }
 
-.dashboard-card[data-status="yellow"] .status-mark {
+[data-status="yellow"] .status-mark {
   width: 18px;
   height: 18px;
   background: var(--gold);
   box-shadow: 0 0 0 4px rgba(185, 121, 22, 0.16);
 }
 
-.dashboard-card[data-status="red"] .status-mark {
+[data-status="red"] .status-mark {
   width: 18px;
   height: 18px;
   background: var(--rose);
@@ -911,6 +976,10 @@ pre {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .scorecard-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .insights-layout,
   .settings-band {
     grid-template-columns: 1fr;
@@ -931,6 +1000,7 @@ pre {
   }
 
   .momentum-summary,
+  .scorecard-grid,
   .log-grid,
   .dashboard-card-row,
   .dashboard-card-row-outcomes,
