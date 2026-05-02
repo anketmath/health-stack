@@ -9,7 +9,7 @@ export default async function handler(request, response) {
     return;
   }
 
-  const { entries, date, profile, supplementContext } = await readBody(request);
+  const { entries, date, profile, oura, supplementContext } = await readBody(request);
   if (!Array.isArray(entries)) {
     response.status(400).json({ error: "Missing entries" });
     return;
@@ -27,7 +27,7 @@ export default async function handler(request, response) {
         {
           role: "system",
           content:
-            "You are a cautious personal health insight assistant. Use only the supplied logs, including social media abstinence when present. For sleep logs, supplements are pre-bed inputs taken on the sleepNight before the sleep being rated the following morning. Separate observations from hypotheses. Avoid diagnosis, medication instructions, or claims stronger than the data supports. Return only valid JSON.",
+            "You are a cautious personal health insight assistant. Use only the supplied logs and Oura sleep/readiness/activity summaries, including social media abstinence when present. For sleep logs, supplements are pre-bed inputs taken on the sleepNight before the sleep being rated the following morning. Separate observations from hypotheses. Avoid diagnosis, medication instructions, or claims stronger than the data supports. Return only valid JSON.",
         },
         {
           role: "user",
@@ -35,6 +35,7 @@ export default async function handler(request, response) {
             date,
             range: "last 7 days",
             profile,
+            oura,
             supplementContext,
             entries,
             outputShape: [

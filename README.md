@@ -12,6 +12,7 @@ MVP health logger for phone-first personal use.
 - Social media asks whether you abstained all day, using a configurable definition.
 - Meal logs trigger a next-meal timing and rough macro suggestion based on your profile, goals, meals, and exercise.
 - Chat lets you ask an LLM questions using profile/settings plus recent logs as context.
+- Oura sync pulls daily sleep, readiness, and activity through a server-side Vercel endpoint.
 - `/api/extract` extracts structured data from new logs when hosted on Vercel.
 - `/api/insights` generates insights from the last 7 days when hosted on Vercel.
 - Supabase Auth plus the `health_entries` and `health_profiles` tables can sync logs/profile across devices.
@@ -23,6 +24,7 @@ MVP health logger for phone-first personal use.
    - `OPENAI_API_KEY`
    - `SUPABASE_URL`
    - `SUPABASE_ANON_KEY`
+   - `OURA_PERSONAL_ACCESS_TOKEN` optional, for Oura sync
    - `OPENAI_MODEL` optional, defaults to `gpt-4.1-mini`
 3. Deploy.
 
@@ -43,6 +45,15 @@ vercel --prod
 4. Create an account or log in from the sidebar.
 
 The app saves locally first, then upserts to `public.health_entries` when logged in.
+
+## Oura Setup
+
+1. In Oura Cloud, create a personal access token.
+2. In Vercel, add it as `OURA_PERSONAL_ACCESS_TOKEN`.
+3. Redeploy the app.
+4. Open the deployed app, go to Settings, and use Oura connection -> Sync Oura.
+
+The token is only read by `/api/oura-sync` on Vercel. It is not shown or stored in the browser.
 
 ## Current Storage Model
 

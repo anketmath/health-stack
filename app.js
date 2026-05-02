@@ -6,7 +6,7 @@ const initialState = {
   entries: [],
   chat: [],
   workoutDraft: null,
-  oura: { tokenLabel: "", lastSync: "" },
+  oura: { lastSync: "", records: [] },
   settings: {
     socialDefinition: DEFAULT_SOCIAL_DEFINITION,
     reminders: { sleep: "08:00", midday: "13:00", dinner: "19:00", endOfDay: "21:30" },
@@ -30,6 +30,7 @@ const initialState = {
 
 let state = loadState();
 let activeFilter = "all";
+let selectedDashboardDate = today();
 let supabaseClient = null;
 let authUser = null;
 let authSubscription = null;
@@ -166,6 +167,13 @@ function setupNavigation() {
       renderRecords();
     });
   });
+
+  document.querySelector("#dashboardDayScroller").addEventListener("click", (event) => {
+    const button = event.target.closest(".day-tile");
+    if (!button) return;
+    selectedDashboardDate = button.dataset.date;
+    renderDashboard();
+  });
 }
 
 function setupForms() {
@@ -187,9 +195,7 @@ function setupForms() {
 
   document.querySelector("#ouraForm").addEventListener("submit", (event) => {
     event.preventDefault();
-    state.oura = Object.fromEntries(new FormData(event.currentTarget).entries());
-    saveState();
-    showToast("Oura settings saved");
+    syncOura(Number(Object.fromEntries(new FormData(event.currentTarget).entries()).days) || 14);
   });
 
   document.querySelector("#socialDefinitionForm").addEventListener("submit", (event) => {
@@ -323,6 +329,18 @@ function heuristicExtraction(entry) {
 
 function setupDataActions() {
   document.querySelector("#recordsList").addEventListener("click", (event) => {
+    const editButton = event.target.closest(".edit-button");
+    if (editButton) {
+      renderEditForm(editButton.dataset.id);
+      return;
+    }
+
+    const cancelButton = event.target.closest(".cancel-edit-button");
+    if (cancelButton) {
+      renderRecords();
+      return;
+    }
+
     const button = event.target.closest(".delete-button");
     if (!button) return;
     if (!window.confirm("Delete this log from this device and cloud sync if available?")) return;
@@ -332,6 +350,8 @@ function setupDataActions() {
     render();
     showToast("Entry deleted");
   });
+
+  document.querySelector("#recordsList").addEventListener("submit", handleEditSubmit);
 
   document.querySelector("#exportButton").addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
@@ -401,9 +421,23 @@ async function askChatQuestion(question) {
     if (!response.ok) throw new Error(await response.text());
     const data = await response.json();
     updateChatMessage(pendingId, data.answer || "I could not form an answer.");
-  } catch {
-    updateChatMessage(pendingId, localChatAnswer(question));
+  } catch (error) {
+    updateChatMessage(pendingId, `${localChatAnswer(question)}\n\nLLM endpoint status: ${friendlyApiError(error)}`);
   }
+}
+
+function friendlyApiError(error) {
+  const message = String(error?.message || error || "");
+  if (message.includes("429")) {
+    return "deployed, but OpenAI returned 429. This usually means the API key hit a rate limit, quota limit, or billing/usage cap.";
+  }
+  if (message.includes("OPENAI_API_KEY")) {
+    return "deployed, but OPENAI_API_KEY is missing or unavailable in Vercel.";
+  }
+  if (message.includes("401")) {
+    return "deployed, but OpenAI rejected the API key.";
+  }
+  return message || "unavailable; using local fallback.";
 }
 
 function showView(key) {
@@ -419,6 +453,7 @@ function buildChatPayload(question) {
     profile: state.profile,
     settings: state.settings,
     recentEntries: entriesFromLastDays(14),
+    oura: ouraContext(14),
     supplementContext: supplementContext(30),
     chatHistory: state.chat.slice(-8),
     instruction: "Answer using the user's profile, goals, settings, and recent health logs. Be practical and cautious, and clearly state uncertainty.",
@@ -546,7 +581,10 @@ function dailySummaryText() {
   const totals = nutritionTotals(meals);
   const medMinutes = todayEntries.filter((entry) => entry.type === "meditation").reduce((sum, entry) => sum + (Number(entry.fields?.minutes) || 0), 0);
   const exerciseBurn = estimateExerciseCalories(todayEntries.filter((entry) => entry.type === "exercise"));
-  return `${totals.calories} cal eaten · ~${exerciseBurn} cal exercise · ${totals.protein}g protein · ${medMinutes} meditation min`;
+  const ouraToday = ouraRecordFor(today());
+  const ouraBurn = Number(ouraToday?.dailyActivity?.total_calories) || Number(ouraToday?.dailyActivity?.active_calories) || 0;
+  const burnText = ouraBurn ? `${Math.round(ouraBurn)} Oura cal` : `~${exerciseBurn} cal exercise`;
+  return `${totals.calories} cal eaten · ${burnText} · ${totals.protein}g protein · ${medMinutes} meditation min`;
 }
 
 function estimateExerciseCalories(entries) {
@@ -584,6 +622,7 @@ function buildWorkoutPayload(request, feedback) {
     feedback,
     priorDraft: state.workoutDraft,
     profile: state.profile,
+    oura: ouraContext(14),
     recentExercise: entriesFromLastDays(21).filter((entry) => entry.type === "exercise"),
     recentSleep: entriesFromLastDays(7).filter((entry) => entry.type === "sleep"),
     instruction: "Generate a useful home workout using goals, available equipment, familiar exercises, recent exercise load, recent hikes/leg fatigue, and past weights/reps when present. Support hypertrophy progression with sensible reps/sets/weights.",
@@ -687,6 +726,7 @@ function buildMealSuggestionPayload(mealEntry) {
       assumption: "If a meal or snack is logged around 9 PM or later, the user is likely approaching sleep and should usually not be told to eat another normal meal in 3-5 hours.",
     },
     profile: state.profile,
+    oura: ouraContext(14),
     latestMeal: mealEntry,
     priorNutrition: nutritionTotals(priorMeals),
     today: {
@@ -832,7 +872,7 @@ async function generateInsights() {
     const response = await fetch("/api/insights", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ entries: recentEntries, date: today(), profile: state.profile, supplementContext: supplementContext(30) }),
+      body: JSON.stringify(buildInsightPayload(recentEntries)),
     });
     if (!response.ok) throw new Error(await response.text());
     const data = await response.json();
@@ -848,6 +888,7 @@ function buildInsightPayload(entries) {
     range: "last 7 days",
     entries,
     profile: state.profile,
+    oura: ouraContext(30),
     supplementContext: supplementContext(30),
     instruction: "Find useful patterns across exercise, meals, subjective sleep quality, pills/supplements, meditation, social media abstinence, and available extracted fields.",
   };
@@ -963,29 +1004,47 @@ function entriesFromLastDays(days) {
 }
 
 function recentDays(days = 14) {
+  return daysEndingAt(today(), days);
+}
+
+function daysEndingAt(endDate, days = 14) {
+  const end = new Date(`${endDate}T12:00:00`);
   return Array.from({ length: days }, (_, index) => {
-    const date = new Date();
-    date.setHours(12, 0, 0, 0);
+    const date = new Date(end);
     date.setDate(date.getDate() - days + 1 + index);
     return date.toISOString().slice(0, 10);
   });
 }
 
+function ouraContext(days = 14) {
+  const allowedDates = new Set(recentDays(days));
+  const records = (state.oura.records || []).filter((record) => allowedDates.has(record.date)).sort((a, b) => a.date.localeCompare(b.date));
+  return {
+    lastSync: state.oura.lastSync || "",
+    records,
+    averageSleepScore: average(records.map((record) => record.dailySleep?.score)),
+    averageReadiness: average(records.map((record) => record.dailyReadiness?.score)),
+    averageSteps: average(records.map((record) => record.dailyActivity?.steps)),
+  };
+}
+
+function ouraRecordFor(date) {
+  return (state.oura.records || []).find((record) => record.date === date);
+}
+
 function renderDashboard() {
-  const days = recentDays(14);
-  const entries = entriesFromLastDays(14);
-  const byDate = groupByDate(entries);
-  const exerciseDays = days.filter((date) => (byDate[date] || []).some((entry) => entry.type === "exercise"));
-  const mealDays = days.filter((date) => (byDate[date] || []).some((entry) => entry.type === "meal"));
-  const sleepEntries = entries.filter((entry) => entry.type === "sleep");
-  const medEntries = entries.filter((entry) => entry.type === "meditation");
-  const socialEntries = entries.filter((entry) => entry.type === "social");
-  const socialAbstainedDays = days.filter((date) => (byDate[date] || []).some((entry) => entry.type === "social" && entry.fields?.abstained));
-  const avgSleep = average(sleepEntries.map((entry) => entry.fields?.quality));
-  const meditationMinutes = medEntries.reduce((total, entry) => total + (Number(entry.fields?.minutes) || 0), 0);
-  const supplementChanges = supplementContext(30).changes.length;
-  const todayMeals = state.entries.filter((entry) => entry.date === today() && entry.type === "meal");
-  const todayNutrition = nutritionTotals(todayMeals);
+  const timelineDays = recentDays(30);
+  if (!timelineDays.includes(selectedDashboardDate)) selectedDashboardDate = today();
+  renderDashboardDayScroller(timelineDays);
+
+  const selectedEntries = state.entries.filter((entry) => entry.date === selectedDashboardDate).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const byType = groupByType(selectedEntries);
+  const selectedOura = ouraRecordFor(selectedDashboardDate);
+  const meals = byType.meal || [];
+  const nutrition = nutritionTotals(meals);
+  const medMinutes = (byType.meditation || []).reduce((total, entry) => total + (Number(entry.fields?.minutes) || 0), 0);
+  const sleep = (byType.sleep || [])[0];
+  const social = (byType.social || []).find((entry) => entry.fields?.abstained) || (byType.social || [])[0];
 
   const cards = [
     ...(profileIsSparse()
@@ -995,58 +1054,51 @@ function renderDashboard() {
             value: "Incomplete",
             detail: "Add age, body metrics, goals, equipment, and sleep stack for better suggestions.",
             tone: "gold",
-            dots: "",
+            items: [],
           },
         ]
       : []),
     {
       title: "Exercise",
-      value: `${exerciseDays.length}/14 days`,
-      detail: `${currentStreak(days, (date) => (byDate[date] || []).some((entry) => entry.type === "exercise"))} day streak`,
+      value: `${(byType.exercise || []).length} logs`,
+      detail: `${streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "exercise"))} day streak as of this day`,
       tone: "green",
-      dots: dotsFor(days, (date) => (byDate[date] || []).some((entry) => entry.type === "exercise")),
+      items: rawItems(byType.exercise, "No exercise logged."),
     },
     {
-      title: "Meals",
-      value: `${entries.filter((entry) => entry.type === "meal").length} logs`,
-      detail: `${mealDays.length} days with meal data`,
+      title: "Meals and nutrition",
+      value: meals.length ? `${nutrition.calories} cal` : "No meals",
+      detail: `${nutrition.protein}g protein · ${nutrition.carbs}g carbs · ${nutrition.fat}g fat`,
       tone: "gold",
-      dots: dotsFor(days, (date) => (byDate[date] || []).some((entry) => entry.type === "meal")),
-    },
-    {
-      title: "Today nutrition",
-      value: `${todayNutrition.calories} cal`,
-      detail: `${todayNutrition.protein}g protein · ${todayNutrition.carbs}g carbs · ${todayNutrition.fat}g fat`,
-      tone: "gold",
-      dots: dotsFor(days, (date) => date === today() && todayMeals.length > 0),
+      items: rawItems(meals, "No meals logged."),
     },
     {
       title: "Sleep",
-      value: avgSleep ? `${formatNumber(avgSleep)}/10 avg` : "-",
-      detail: `${sleepEntries.length} subjective scores`,
-      tone: avgSleep && avgSleep < 6.5 ? "rose" : "blue",
-      dots: dotsFor(days, (date) => (byDate[date] || []).some((entry) => entry.type === "sleep"), (date) => sleepTone(byDate[date] || [])),
+      value: sleep?.fields?.quality ? `${sleep.fields.quality}/10` : selectedOura?.dailySleep?.score ? `${selectedOura.dailySleep.score}/100 Oura` : "No score",
+      detail: `${streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "sleep"))} day subjective streak`,
+      tone: Number(sleep?.fields?.quality) <= 5 ? "rose" : "blue",
+      items: sleepItems(sleep, selectedOura),
     },
     {
       title: "Meditation",
-      value: `${meditationMinutes} min`,
-      detail: `${currentStreak(days, (date) => (byDate[date] || []).some((entry) => entry.type === "meditation"))} day streak`,
+      value: medMinutes ? `${medMinutes} min` : "No minutes",
+      detail: `${streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "meditation"))} day streak as of this day`,
       tone: "green",
-      dots: dotsFor(days, (date) => (byDate[date] || []).some((entry) => entry.type === "meditation")),
+      items: rawItems(byType.meditation, "No meditation logged."),
     },
     {
       title: "Social abstinence",
-      value: `${socialAbstainedDays.length}/14 days`,
-      detail: `${currentStreak(days, (date) => (byDate[date] || []).some((entry) => entry.type === "social" && entry.fields?.abstained))} day streak`,
-      tone: "blue",
-      dots: dotsFor(days, (date) => (byDate[date] || []).some((entry) => entry.type === "social" && entry.fields?.abstained)),
+      value: social ? (social.fields?.abstained ? "Abstained" : "Not abstained") : "No log",
+      detail: `${streakAsOf(selectedDashboardDate, (date) => hasSocialAbstainedOnDate(date))} day streak as of this day`,
+      tone: social?.fields?.abstained ? "blue" : "gold",
+      items: rawItems(byType.social, "No social media log."),
     },
     {
-      title: "Supplement changes",
-      value: `${supplementChanges}`,
-      detail: "Detected in last 30 days",
-      tone: supplementChanges ? "gold" : "green",
-      dots: dotsFor(days, (date) => supplementContext(30).changes.some((change) => change.date === date)),
+      title: "Oura activity",
+      value: selectedOura?.dailyReadiness?.score ? `${selectedOura.dailyReadiness.score}/100 readiness` : "No Oura data",
+      detail: selectedOura?.dailyActivity ? `${selectedOura.dailyActivity.steps || 0} steps · ${selectedOura.dailyActivity.active_calories || 0} active cal` : state.oura.lastSync ? `Last synced ${state.oura.lastSync}` : "Sync Oura in settings.",
+      tone: selectedOura?.dailyReadiness?.score && selectedOura.dailyReadiness.score < 65 ? "gold" : "blue",
+      items: ouraItems(selectedOura),
     },
   ];
 
@@ -1057,40 +1109,79 @@ function profileIsSparse() {
   return !state.profile.age || !state.profile.goal || !state.profile.weight || !state.profile.homeEquipment;
 }
 
-function currentStreak(days, isActive) {
-  let streak = 0;
-  for (let index = days.length - 1; index >= 0; index -= 1) {
-    if (!isActive(days[index])) break;
-    streak += 1;
-  }
-  return streak;
+function renderDashboardDayScroller(days) {
+  const scroller = document.querySelector("#dashboardDayScroller");
+  scroller.innerHTML = days
+    .map((date) => {
+      const dayEntries = state.entries.filter((entry) => entry.date === date);
+      const label = date === today() ? "Today" : new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" });
+      const dayNumber = new Date(`${date}T12:00:00`).getDate();
+      return `<button class="day-tile ${date === selectedDashboardDate ? "is-selected" : ""}" type="button" data-date="${escapeHtml(date)}" title="${escapeHtml(date)}">
+        <span>${escapeHtml(label)}</span>
+        <strong>${dayNumber}</strong>
+        <small>${dayEntries.length || ""}</small>
+      </button>`;
+    })
+    .join("");
+
+  window.requestAnimationFrame(() => {
+    const selected = scroller.querySelector(".day-tile.is-selected");
+    selected?.scrollIntoView({ inline: "end", block: "nearest" });
+  });
 }
 
-function groupByDate(entries) {
+function groupByType(entries) {
   return entries.reduce((groups, entry) => {
-    groups[entry.date] ||= [];
-    groups[entry.date].push(entry);
+    groups[entry.type] ||= [];
+    groups[entry.type].push(entry);
     return groups;
   }, {});
 }
 
-function dotsFor(days, isActive, toneFor = () => "") {
-  return days
-    .map((date) => {
-      const active = isActive(date);
-      const tone = toneFor(date);
-      return `<span class="day-dot ${active ? "is-active" : ""} ${tone}" title="${escapeHtml(date)}"></span>`;
-    })
-    .join("");
+function hasEntryOnDate(date, type) {
+  return state.entries.some((entry) => entry.date === date && entry.type === type);
 }
 
-function sleepTone(entries) {
-  const sleep = entries.find((entry) => entry.type === "sleep");
-  const quality = Number(sleep?.fields?.quality);
-  if (!Number.isFinite(quality)) return "";
-  if (quality >= 8) return "is-good";
-  if (quality <= 5) return "is-low";
-  return "";
+function hasSocialAbstainedOnDate(date) {
+  return state.entries.some((entry) => entry.date === date && entry.type === "social" && entry.fields?.abstained);
+}
+
+function streakAsOf(date, isActive) {
+  let streak = 0;
+  const cursor = new Date(`${date}T12:00:00`);
+  for (let index = 0; index < 365; index += 1) {
+    const day = cursor.toISOString().slice(0, 10);
+    if (!isActive(day)) break;
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
+function rawItems(entries = [], emptyText) {
+  if (!entries.length) return [emptyText];
+  return entries.map((entry) => entry.rawText);
+}
+
+function sleepItems(sleep, oura) {
+  const items = [];
+  if (sleep) {
+    items.push(`Subjective sleep quality: ${sleep.fields?.quality || "-"} / 10`);
+    if (sleep.fields?.pills) items.push("Pre-bed supplement stack logged");
+  }
+  if (oura?.dailySleep) items.push(`Oura sleep score ${oura.dailySleep.score || "-"} · ${Math.round((oura.dailySleep.total_sleep_duration || 0) / 3600)}h sleep`);
+  if (oura?.dailyReadiness) items.push(`Oura readiness ${oura.dailyReadiness.score || "-"}/100`);
+  if (!items.length) items.push("No sleep logged.");
+  return items;
+}
+
+function ouraItems(oura) {
+  if (!oura) return ["No Oura data for this day."];
+  return [
+    oura.dailyActivity ? `Activity: ${oura.dailyActivity.steps || 0} steps, ${oura.dailyActivity.active_calories || 0} active calories` : "",
+    oura.dailyReadiness ? `Readiness: ${oura.dailyReadiness.score || "-"} / 100` : "",
+    oura.dailySleep ? `Sleep: ${oura.dailySleep.score || "-"} / 100` : "",
+  ].filter(Boolean);
 }
 
 function renderDashboardCard(card) {
@@ -1100,7 +1191,9 @@ function renderDashboardCard(card) {
     </div>
     <strong>${escapeHtml(card.value)}</strong>
     <p>${escapeHtml(card.detail)}</p>
-    <div class="dot-row" aria-hidden="true">${card.dots}</div>
+    <ul class="dashboard-list">
+      ${(card.items || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+    </ul>
   </article>`;
 }
 
@@ -1123,7 +1216,10 @@ function renderRecords() {
             <span class="record-type">${escapeHtml(labelFor(entry.type))}</span>
             <h3>${escapeHtml(entry.date)} · ${escapeHtml(timeLabel(entry.createdAt))}</h3>
           </div>
-          <button class="delete-button" data-id="${escapeHtml(entry.id)}" type="button">Delete</button>
+          <div class="button-row">
+            <button class="secondary-button edit-button" data-id="${escapeHtml(entry.id)}" type="button">Edit</button>
+            <button class="delete-button" data-id="${escapeHtml(entry.id)}" type="button">Delete</button>
+          </div>
         </div>
         <p class="raw-log">${escapeHtml(entry.rawText)}</p>
         <details>
@@ -1141,6 +1237,86 @@ function renderRecords() {
       </article>`,
     )
     .join("");
+}
+
+function renderEditForm(id) {
+  const entry = state.entries.find((item) => item.id === id);
+  if (!entry) return;
+  document.querySelector("#recordsList").innerHTML = `<article class="record-card">
+    <div class="record-header">
+      <div>
+        <span class="record-type">Edit ${escapeHtml(labelFor(entry.type))}</span>
+        <h3>${escapeHtml(entry.date)}</h3>
+      </div>
+    </div>
+    <form class="edit-form" data-id="${escapeHtml(entry.id)}">
+      <label>Date <input type="date" name="date" value="${escapeHtml(entry.date)}" required /></label>
+      ${editFieldsFor(entry)}
+      <label>Raw log <textarea name="rawText" required>${escapeHtml(entry.rawText)}</textarea></label>
+      <div class="button-row">
+        <button type="submit">Save changes</button>
+        <button class="secondary-button cancel-edit-button" type="button">Cancel</button>
+      </div>
+    </form>
+  </article>`;
+}
+
+function editFieldsFor(entry) {
+  if (entry.type === "sleep") {
+    return `<div class="two-col">
+      <label>Quality <input type="number" name="quality" min="1" max="10" value="${escapeHtml(entry.fields?.quality || "")}" /></label>
+      <label>Pre-bed supplements <input name="pills" value="${escapeHtml(entry.fields?.pills || "")}" /></label>
+    </div>`;
+  }
+  if (entry.type === "meditation") {
+    return `<div class="two-col">
+      <label>Minutes <input type="number" name="minutes" min="1" value="${escapeHtml(entry.fields?.minutes || "")}" /></label>
+      <label>Time <input type="time" name="time" value="${escapeHtml(entry.fields?.time || "")}" /></label>
+    </div>`;
+  }
+  if (entry.type === "social") {
+    return `<label class="check-row">
+      <input type="checkbox" name="abstained" value="yes" ${entry.fields?.abstained ? "checked" : ""} />
+      <span>Abstained all day</span>
+    </label>
+    <label>Notes <textarea name="notes">${escapeHtml(entry.fields?.notes || "")}</textarea></label>`;
+  }
+  return "";
+}
+
+async function handleEditSubmit(event) {
+  if (!event.target.matches(".edit-form")) return;
+  event.preventDefault();
+  const entry = state.entries.find((item) => item.id === event.target.dataset.id);
+  if (!entry) return;
+  const data = Object.fromEntries(new FormData(event.target).entries());
+  entry.date = data.date;
+  entry.rawText = data.rawText.trim();
+  entry.fields = editedFieldsFor(entry, data);
+  entry.updatedAt = new Date().toISOString();
+  entry.extractionStatus = "pending";
+  entry.mealSuggestion = null;
+  saveState();
+  render();
+  showToast("Entry updated");
+  const extracted = await extractEntry(entry);
+  if (extracted.type === "meal") await generateMealSuggestion(extracted.id);
+}
+
+function editedFieldsFor(entry, data) {
+  if (entry.type === "sleep") {
+    return {
+      ...entry.fields,
+      quality: Number(data.quality),
+      pills: data.pills?.trim() || "",
+      sleepNight: entry.fields?.sleepNight || previousDate(data.date),
+      scoreEnteredOn: data.date,
+      supplementTiming: "Taken before bed on the sleepNight, before the sleep being rated the following morning.",
+    };
+  }
+  if (entry.type === "meditation") return { minutes: Number(data.minutes), time: data.time };
+  if (entry.type === "social") return { abstained: data.abstained === "yes", definition: state.settings.socialDefinition, notes: data.notes?.trim() || "" };
+  return entry.fields || {};
 }
 
 function renderTodaySummary() {
@@ -1168,7 +1344,6 @@ function renderChat() {
 
 function renderSettings() {
   const form = document.querySelector("#ouraForm");
-  form.tokenLabel.value = state.oura.tokenLabel || "";
   form.lastSync.value = state.oura.lastSync || "";
   const profileForm = document.querySelector("#profileForm");
   Object.entries(state.profile).forEach(([key, value]) => {
@@ -1179,6 +1354,32 @@ function renderSettings() {
     if (reminderForm.elements[key]) reminderForm.elements[key].value = value || "";
   });
   document.querySelector("#socialDefinitionInput").value = state.settings.socialDefinition || DEFAULT_SOCIAL_DEFINITION;
+}
+
+async function syncOura(days = 14) {
+  const safeDays = Math.min(Math.max(Number(days) || 14, 1), 90);
+  showToast("Syncing Oura...");
+  try {
+    const response = await fetch(`/api/oura-sync?days=${safeDays}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Oura sync failed");
+    state.oura = {
+      lastSync: today(),
+      records: mergeOuraRecords(state.oura.records || [], data.records || []),
+    };
+    saveState();
+    render();
+    await syncProfileToCloud();
+    showToast(`Oura synced: ${data.records?.length || 0} days`);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+function mergeOuraRecords(existing, incoming) {
+  const byDate = new Map(existing.map((record) => [record.date, record]));
+  incoming.forEach((record) => byDate.set(record.date, record));
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date)).slice(-180);
 }
 
 function render() {
@@ -1417,6 +1618,7 @@ function toCloudRow(entry) {
     extraction: entry.extraction || null,
     extraction_status: entry.extractionStatus || null,
     meal_suggestion: entry.mealSuggestion || null,
+    updated_at: entry.updatedAt || new Date().toISOString(),
   };
 }
 
@@ -1431,6 +1633,7 @@ function fromCloudRow(row) {
     extraction: row.extraction || null,
     extractionStatus: row.extraction_status || null,
     mealSuggestion: row.meal_suggestion || null,
+    updatedAt: row.updated_at || null,
   };
 }
 
@@ -1443,6 +1646,7 @@ async function syncProfileToCloud() {
         user_id: authUser.id,
         profile: state.profile,
         settings: state.settings,
+        oura: state.oura,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id" },
@@ -1460,6 +1664,7 @@ async function loadProfileFromCloud() {
   if (data) {
     state.profile = { ...initialState.profile, ...(data.profile || {}) };
     state.settings = { ...state.settings, ...(data.settings || {}) };
+    state.oura = { ...initialState.oura, ...(data.oura || state.oura || {}) };
     saveState();
     render();
   } else {

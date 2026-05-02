@@ -65,8 +65,12 @@ create table if not exists public.health_profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   profile jsonb not null default '{}'::jsonb,
   settings jsonb not null default '{}'::jsonb,
+  oura jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );
+
+alter table public.health_profiles
+  add column if not exists oura jsonb not null default '{}'::jsonb;
 
 alter table public.health_profiles enable row level security;
 

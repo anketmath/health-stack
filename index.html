@@ -48,7 +48,7 @@
         <section class="view is-visible" id="dashboardView">
           <header class="page-header">
             <div>
-              <p class="eyebrow">Last 14 days</p>
+              <p class="eyebrow">Daily review</p>
               <h2>Health dashboard</h2>
             </div>
           </header>
@@ -58,6 +58,7 @@
             <button type="submit">Ask</button>
           </form>
 
+          <div class="day-scroller" id="dashboardDayScroller" aria-label="Select dashboard day"></div>
           <div class="dashboard-grid" id="dashboardGrid"></div>
         </section>
 
@@ -235,12 +236,12 @@
           <section class="settings-band">
             <div>
               <h3>Oura connection</h3>
-              <p>Oura sync belongs on the server so tokens are not exposed in the browser.</p>
+              <p>Sync sleep, readiness, and activity from Oura. The token stays in Vercel environment variables.</p>
             </div>
             <form id="ouraForm" class="settings-form">
-              <label>Token label <input name="tokenLabel" placeholder="Personal Oura token" /></label>
               <label>Last sync <input type="date" name="lastSync" /></label>
-              <button type="submit">Save</button>
+              <label>Days <input type="number" name="days" min="1" max="90" value="14" /></label>
+              <button type="submit">Sync Oura</button>
             </form>
           </section>
 

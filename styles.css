@@ -314,6 +314,54 @@ label,
   gap: 14px;
 }
 
+.day-scroller {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 68px;
+  gap: 8px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding: 2px 0 14px;
+  margin-bottom: 12px;
+  scrollbar-width: thin;
+}
+
+.day-tile {
+  min-height: 76px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 8px;
+  display: grid;
+  justify-items: start;
+  align-content: space-between;
+  box-shadow: none;
+}
+
+.day-tile.is-selected {
+  background: #16201c;
+  border-color: #16201c;
+  color: #f6f1e8;
+}
+
+.day-tile span,
+.day-tile small {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.day-tile.is-selected span,
+.day-tile.is-selected small {
+  color: #dbe3de;
+}
+
+.day-tile strong {
+  font-size: 24px;
+  line-height: 1;
+}
+
 .dashboard-card {
   padding: 18px;
   border-left: 5px solid var(--green);
@@ -344,33 +392,22 @@ label,
   line-height: 1.45;
 }
 
-.dot-row {
+.dashboard-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
   display: grid;
-  grid-template-columns: repeat(14, 1fr);
-  gap: 5px;
+  gap: 8px;
 }
 
-.day-dot {
-  display: block;
-  aspect-ratio: 1;
-  border-radius: 4px;
-  background: #ece7dd;
+.dashboard-list li {
+  background: #f7f4ee;
   border: 1px solid var(--line);
-}
-
-.day-dot.is-active {
-  background: var(--green);
-  border-color: var(--green);
-}
-
-.day-dot.is-good {
-  background: var(--blue);
-  border-color: var(--blue);
-}
-
-.day-dot.is-low {
-  background: var(--rose);
-  border-color: var(--rose);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--ink);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .log-card {
@@ -565,6 +602,11 @@ button[type="submit"] {
 
 .chat-form button {
   justify-self: start;
+}
+
+.edit-form {
+  display: grid;
+  gap: 12px;
 }
 
 .import-button {
