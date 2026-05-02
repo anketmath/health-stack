@@ -402,6 +402,7 @@ label,
   border-left: 5px solid #9aa39f;
   display: grid;
   gap: 12px;
+  align-content: start;
 }
 
 .dashboard-card[data-status="green"] {
@@ -416,86 +417,92 @@ label,
   border-left-color: var(--rose);
 }
 
-.dashboard-card-head,
-.dashboard-primary,
-.dashboard-metric {
+.dashboard-card-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 
-.dashboard-card-head h3 {
+.dashboard-card h3 {
   margin: 0;
   font-size: 16px;
 }
 
-.status-light {
-  width: 13px;
-  height: 13px;
+.status-mark {
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1;
+  color: white;
   background: #9aa39f;
   box-shadow: 0 0 0 4px rgba(154, 163, 159, 0.14);
   flex: 0 0 auto;
 }
 
-.dashboard-card[data-status="green"] .status-light {
+.dashboard-card[data-status="green"] .status-mark {
   background: var(--green);
   box-shadow: 0 0 0 4px rgba(37, 108, 84, 0.14);
 }
 
-.dashboard-card[data-status="yellow"] .status-light {
+.dashboard-card[data-status="yellow"] .status-mark {
+  width: 18px;
+  height: 18px;
   background: var(--gold);
   box-shadow: 0 0 0 4px rgba(185, 121, 22, 0.16);
 }
 
-.dashboard-card[data-status="red"] .status-light {
+.dashboard-card[data-status="red"] .status-mark {
+  width: 18px;
+  height: 18px;
   background: var(--rose);
   box-shadow: 0 0 0 4px rgba(166, 75, 88, 0.15);
 }
 
-.dashboard-primary strong {
-  font-size: 25px;
-  line-height: 1;
-}
-
-.streak-badge {
-  width: 66px;
-  height: 66px;
-  border-radius: 999px;
+.streak-chip {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 7px;
   border: 1px solid var(--line);
   background: #f7f4ee;
-  display: grid;
-  place-items: center;
-  align-content: center;
+  border-radius: 999px;
+  padding: 5px 6px 5px 10px;
 }
 
-.streak-badge b {
-  font-size: 20px;
+.streak-chip b {
+  min-width: 36px;
+  min-height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  font-size: 15px;
   line-height: 1;
 }
 
-.streak-badge small {
+.streak-chip small {
   font-size: 10px;
   font-weight: 800;
   color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .dashboard-metric {
   background: #f7f4ee;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 10px 11px;
-}
-
-.dashboard-metric span {
-  font-size: 20px;
+  padding: 10px;
+  font-size: 18px;
   font-weight: 850;
-}
-
-.dashboard-metric small {
-  color: var(--muted);
-  font-weight: 800;
+  line-height: 1.2;
+  text-align: center;
 }
 
 .dashboard-list {

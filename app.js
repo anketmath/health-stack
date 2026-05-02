@@ -1067,36 +1067,28 @@ function renderDashboard() {
     {
       title: "Exercise",
       status: exerciseLogged ? "green" : "red",
-      value: exerciseLogged ? "Logged" : "Open",
-      metric: `${(byType.exercise || []).length || 0}`,
-      metricLabel: "logs",
+      metric: sessionMetric((byType.exercise || []).length),
       streak: streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "exercise")),
       items: rawItems(byType.exercise),
     },
     {
       title: "Diet",
       status: dietStatus.status,
-      value: dietStatus.label,
-      metric: `${nutrition.calories || 0}`,
-      metricLabel: "cal",
+      metric: `${nutrition.calories || 0} cal · ${nutrition.protein || 0}g protein`,
       streak: streakAsOf(selectedDashboardDate, (date) => dietStatusFor(nutritionTotals(state.entries.filter((entry) => entry.date === date && entry.type === "meal")), state.entries.filter((entry) => entry.date === date && entry.type === "meal"), date).status === "green"),
       items: [`${nutrition.protein || 0}g protein`, `${nutrition.carbs || 0}g carbs`, `${nutrition.fat || 0}g fat`],
     },
     {
       title: "Meditation",
       status: medMinutes > 0 ? "green" : "red",
-      value: medMinutes > 0 ? "Done" : "Open",
-      metric: `${medMinutes || 0}`,
-      metricLabel: "min",
+      metric: `${medMinutes || 0} min`,
       streak: streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "meditation")),
       items: rawItems(byType.meditation),
     },
     {
       title: "Digital Minimalism",
       status: social?.fields?.abstained ? "green" : social ? "red" : "yellow",
-      value: social?.fields?.abstained ? "Clear" : social ? "Used" : "Unset",
-      metric: social?.fields?.abstained ? "Yes" : social ? "No" : "-",
-      metricLabel: "today",
+      metric: social?.fields?.abstained ? "Abstained" : social ? "Used" : "Not set",
       streak: streakAsOf(selectedDashboardDate, (date) => hasSocialAbstainedOnDate(date)),
       items: social?.fields?.abstained ? ["Abstained"] : social ? ["Not abstained"] : [],
     },
@@ -1106,18 +1098,14 @@ function renderDashboard() {
     {
       title: "Sleep Quality",
       status: sleepStatus.status,
-      value: sleepStatus.label,
-      metric: sleepStatus.metric,
-      metricLabel: sleepStatus.metricLabel,
+      metric: `${sleepStatus.metric} ${sleepStatus.metricLabel}`,
       streak: streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "sleep")),
       items: sleepItems(sleep, selectedOura),
     },
     {
       title: "Readiness",
       status: readinessStatus.status,
-      value: readinessStatus.label,
-      metric: readinessStatus.metric,
-      metricLabel: readinessStatus.metricLabel,
+      metric: `${readinessStatus.metric} ${readinessStatus.metricLabel}`,
       streak: streakAsOf(selectedDashboardDate, (date) => Boolean(ouraRecordFor(date)?.dailyReadiness?.score)),
       items: readinessStatus.items,
     },
@@ -1127,11 +1115,11 @@ function renderDashboard() {
     ${profileIsSparse() ? renderDashboardNotice() : ""}
     <section class="dashboard-section">
       <div class="dashboard-section-rule"></div>
-      <div class="dashboard-card-row">${inputs.map(renderDashboardCard).join("")}</div>
+      <div class="dashboard-card-row">${sortDashboardCards(inputs).map(renderDashboardCard).join("")}</div>
     </section>
     <section class="dashboard-section">
       <div class="dashboard-section-rule"></div>
-      <div class="dashboard-card-row dashboard-card-row-outcomes">${outcomes.map(renderDashboardCard).join("")}</div>
+      <div class="dashboard-card-row dashboard-card-row-outcomes">${sortDashboardCards(outcomes).map(renderDashboardCard).join("")}</div>
     </section>`;
 }
 
@@ -1190,6 +1178,17 @@ function streakAsOf(date, isActive) {
 
 function rawItems(entries = []) {
   return entries.map((entry) => entry.rawText);
+}
+
+function sessionMetric(count) {
+  return `${count || 0} ${count === 1 ? "session" : "sessions"}`;
+}
+
+function sortDashboardCards(cards) {
+  const rank = { green: 0, yellow: 1, red: 2 };
+  return cards
+    .map((card, index) => ({ ...card, index }))
+    .sort((a, b) => (rank[a.status] ?? 3) - (rank[b.status] ?? 3) || (b.streak || 0) - (a.streak || 0) || a.index - b.index);
 }
 
 function dietStatusFor(nutrition, meals, date) {
@@ -1283,18 +1282,12 @@ function renderDashboardNotice() {
 
 function renderDashboardCard(card) {
   return `<article class="dashboard-card" data-status="${escapeHtml(card.status)}">
-    <div class="dashboard-card-head">
-      <h3>${escapeHtml(card.title)}</h3>
-      <span class="status-light" aria-hidden="true"></span>
+    <div class="dashboard-card-top">
+      <span class="status-mark" aria-label="${escapeHtml(card.status === "green" ? "Complete" : card.status)}">${card.status === "green" ? "✓" : ""}</span>
+      <span class="streak-chip"><small>Streak</small><b>${escapeHtml(card.streak || 0)}d</b></span>
     </div>
-    <div class="dashboard-primary">
-      <strong>${escapeHtml(card.value)}</strong>
-      <span class="streak-badge"><b>${escapeHtml(card.streak || 0)}</b><small>d streak</small></span>
-    </div>
-    <div class="dashboard-metric">
-      <span>${escapeHtml(card.metric)}</span>
-      <small>${escapeHtml(card.metricLabel)}</small>
-    </div>
+    <h3>${escapeHtml(card.title)}</h3>
+    <div class="dashboard-metric">${escapeHtml(card.metric)}</div>
     ${(card.items || []).length ? `<ul class="dashboard-list">${card.items.slice(0, 3).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
   </article>`;
 }
