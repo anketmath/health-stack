@@ -364,6 +364,10 @@ button[type="submit"] {
   line-height: 1.45;
 }
 
+.extract-preview:empty {
+  display: none;
+}
+
 .insights-layout {
   display: grid;
   grid-template-columns: 420px minmax(0, 1fr);

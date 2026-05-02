@@ -203,17 +203,6 @@ function setupForms() {
     showToast("Profile saved");
   });
 
-  document.querySelector("#supabaseForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const formData = Object.fromEntries(new FormData(event.currentTarget).entries());
-    state.cloud.supabaseUrl = formData.supabaseUrl.trim();
-    state.cloud.supabaseAnonKey = formData.supabaseAnonKey.trim();
-    saveState();
-    await initializeSupabase();
-    render();
-    showToast("Supabase settings saved");
-  });
-
   document.querySelector("#authForm").addEventListener("submit", handleAuthSubmit);
   document.querySelector("#logoutButton").addEventListener("click", signOut);
 }
@@ -237,8 +226,8 @@ function createEntry(form) {
 
 function rawTextFor(type, data) {
   if (type === "sleep") {
-    const pills = data.pills?.trim() ? ` Pills or supplements: ${data.pills.trim()}.` : "";
-    return `Subjective sleep quality ${data.quality}/10.${pills}`;
+    const pills = data.pills?.trim() ? ` Pre-bed supplements taken the previous night: ${data.pills.trim()}.` : "";
+    return `Subjective sleep quality for last night, entered the following morning: ${data.quality}/10.${pills}`;
   }
   if (type === "meditation") return `${data.minutes} minutes at ${data.time}.`;
   if (type === "social") {
@@ -250,7 +239,15 @@ function rawTextFor(type, data) {
 }
 
 function fieldsFor(type, data) {
-  if (type === "sleep") return { quality: Number(data.quality), pills: data.pills?.trim() || "" };
+  if (type === "sleep") {
+    return {
+      quality: Number(data.quality),
+      pills: data.pills?.trim() || "",
+      sleepNight: previousDate(today()),
+      scoreEnteredOn: today(),
+      supplementTiming: "Taken before bed on the sleepNight, before the sleep being rated the following morning.",
+    };
+  }
   if (type === "meditation") return { minutes: Number(data.minutes), time: data.time };
   if (type === "social") return { abstained: data.abstained === "yes", definition: state.settings.socialDefinition, notes: data.notes?.trim() || "" };
   return {};
@@ -287,7 +284,14 @@ function applyExtraction(id, extraction, status) {
 function heuristicExtraction(entry) {
   const text = entry.rawText;
   if (entry.type === "sleep") {
-    return { type: "sleep", quality: entry.fields.quality, pills: entry.fields.pills || null };
+    return {
+      type: "sleep",
+      quality: entry.fields.quality,
+      pills: entry.fields.pills || null,
+      sleepNight: entry.fields.sleepNight,
+      scoreEnteredOn: entry.fields.scoreEnteredOn,
+      supplementTiming: entry.fields.supplementTiming,
+    };
   }
   if (entry.type === "meditation") {
     return { type: "meditation", minutes: entry.fields.minutes, time: entry.fields.time };
@@ -324,7 +328,7 @@ function setupDataActions() {
   document.querySelector("#recordsList").addEventListener("click", (event) => {
     const button = event.target.closest(".delete-button");
     if (!button) return;
-    if (!window.confirm("Delete this log from local storage and Supabase if synced?")) return;
+    if (!window.confirm("Delete this log from this device and cloud sync if available?")) return;
     state.entries = state.entries.filter((entry) => entry.id !== button.dataset.id);
     saveState();
     deleteEntryFromCloud(button.dataset.id);
@@ -456,6 +460,12 @@ function buildMealSuggestionPayload(mealEntry) {
   const todayEntries = state.entries.filter((entry) => entry.date === today()).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   return {
     date: today(),
+    localTime: nowTime(),
+    timeContext: {
+      lateMealCutoff: "20:30",
+      lateNight: "21:00 or later",
+      assumption: "If a meal or snack is logged around 9 PM or later, the user is likely approaching sleep and should usually not be told to eat another normal meal in 3-5 hours.",
+    },
     profile: state.profile,
     latestMeal: mealEntry,
     today: {
@@ -464,7 +474,7 @@ function buildMealSuggestionPayload(mealEntry) {
       sleep: todayEntries.filter((entry) => entry.type === "sleep"),
       meditation: todayEntries.filter((entry) => entry.type === "meditation"),
     },
-    instruction: "Suggest when to eat the next meal and rough protein, carbs, and fats based on profile/goals, today's meals, and today's exercise. Keep it practical and avoid medical claims.",
+    instruction: "Suggest when to eat the next meal and rough protein, carbs, and fats based on profile/goals, current local time, latest meal timing, today's meals, and today's exercise. If it is late evening, consider sleep timing and avoid suggesting another normal meal before bed unless there is a clear reason.",
   };
 }
 
@@ -477,17 +487,58 @@ function renderMealSuggestion(suggestion, status) {
 }
 
 function localMealSuggestion(payload) {
+  const latestMealText = `${payload.latestMeal.rawText} ${JSON.stringify(payload.latestMeal.extraction || {})}`;
+  const latestMealMinutes = extractMealMinutes(latestMealText) ?? timeToMinutes(payload.localTime);
+  const isLateEvening = latestMealMinutes >= 20 * 60 + 30;
+  const isLateNight = latestMealMinutes >= 21 * 60;
   const exerciseText = payload.today.exercise.map((entry) => `${entry.rawText} ${JSON.stringify(entry.extraction || {})}`).join(" ");
   const hardTraining = /intensity\s*[78-9]|rpe\s*[78-9]|run|lift|strength|interval|hard/i.test(exerciseText);
   const goal = `${payload.profile.goal || ""} ${payload.profile.profileNotes || ""}`.toLowerCase();
   const protein = goal.includes("bulk") || hardTraining ? "35-50g protein" : "25-40g protein";
   const carbs = hardTraining ? "50-90g carbs" : goal.includes("fat loss") || goal.includes("cut") ? "25-50g carbs" : "35-70g carbs";
   const fats = goal.includes("fat loss") || goal.includes("cut") ? "10-20g fats" : "15-30g fats";
+
+  if (isLateEvening) {
+    return {
+      nextMealTiming: isLateNight
+        ? "Do not plan another normal meal tonight. If you are genuinely hungry before bed, keep it small and easy to digest; otherwise make breakfast the next meal."
+        : "Since this was a late-evening meal/snack, make the next planned meal breakfast unless hunger or training recovery clearly says otherwise.",
+      macros: hardTraining ? "If you need a small pre-bed top-up: 15-30g protein, 10-30g carbs, low-to-moderate fat." : "If you need anything else tonight: 10-25g protein, 0-25g carbs, low fat; otherwise no more food tonight.",
+      reasoning: "Local estimate noticed the meal was logged late. Eating another full meal in 3-5 hours would likely collide with sleep.",
+    };
+  }
+
   return {
     nextMealTiming: hardTraining ? "Eat the next meal within 1-2 hours if you trained hard today; otherwise aim for your normal 3-5 hour gap." : "Aim for the next meal in about 3-5 hours, adjusted for hunger and schedule.",
     macros: `Rough target: ${protein}, ${carbs}, ${fats}.`,
     reasoning: "Local estimate based on your logged meal, today's exercise text, and saved goal. The LLM version will use richer extraction when deployed.",
   };
+}
+
+function extractMealMinutes(text) {
+  const lower = text.toLowerCase();
+  const clock = lower.match(/\b([01]?\d|2[0-3]):([0-5]\d)\s*(am|pm)?\b/);
+  if (clock) {
+    let hour = Number(clock[1]);
+    const minute = Number(clock[2]);
+    const period = clock[3];
+    if (period === "pm" && hour < 12) hour += 12;
+    if (period === "am" && hour === 12) hour = 0;
+    return hour * 60 + minute;
+  }
+  const simple = lower.match(/\b(1[0-2]|[1-9])\s*(am|pm)\b/);
+  if (simple) {
+    let hour = Number(simple[1]);
+    if (simple[2] === "pm" && hour < 12) hour += 12;
+    if (simple[2] === "am" && hour === 12) hour = 0;
+    return hour * 60;
+  }
+  return null;
+}
+
+function timeToMinutes(value) {
+  const [hour, minute] = String(value || "12:00").split(":").map(Number);
+  return (Number.isFinite(hour) ? hour : 12) * 60 + (Number.isFinite(minute) ? minute : 0);
 }
 
 async function generateInsights() {
@@ -582,8 +633,11 @@ function supplementContext(days = 30) {
     .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt));
   const timeline = sleepEntries.map((entry) => ({
     date: entry.date,
+    sleepNight: entry.fields?.sleepNight || previousDate(entry.date),
+    scoreEnteredOn: entry.fields?.scoreEnteredOn || entry.date,
     sleepQuality: entry.fields?.quality ?? entry.extraction?.quality ?? entry.extraction?.sleepQuality ?? null,
     pills: normalizeStack(entry.fields?.pills || entry.extraction?.pills || entry.extraction?.supplements?.join(", ") || ""),
+    supplementTiming: entry.fields?.supplementTiming || "Taken before bed on sleepNight.",
   }));
   const changes = [];
   let previous = null;
@@ -600,9 +654,16 @@ function supplementContext(days = 30) {
   });
   return {
     currentStack: timeline.at(-1)?.pills || "",
+    interpretation: "Each stack belongs to the sleepNight and represents supplements taken before bed before the sleep quality score was entered the next morning.",
     timeline,
     changes,
   };
+}
+
+function previousDate(dateString) {
+  const date = new Date(`${dateString}T12:00:00`);
+  date.setDate(date.getDate() - 1);
+  return date.toISOString().slice(0, 10);
 }
 
 function normalizeStack(value) {
@@ -685,15 +746,11 @@ function renderSettings() {
   const form = document.querySelector("#ouraForm");
   form.tokenLabel.value = state.oura.tokenLabel || "";
   form.lastSync.value = state.oura.lastSync || "";
-  const supabaseForm = document.querySelector("#supabaseForm");
-  supabaseForm.supabaseUrl.value = state.cloud.supabaseUrl || "";
-  supabaseForm.supabaseAnonKey.value = state.cloud.supabaseAnonKey || "";
   const profileForm = document.querySelector("#profileForm");
   Object.entries(state.profile).forEach(([key, value]) => {
     if (profileForm.elements[key]) profileForm.elements[key].value = value || "";
   });
   document.querySelector("#socialDefinitionInput").value = state.settings.socialDefinition || DEFAULT_SOCIAL_DEFINITION;
-  document.querySelector("#socialDefinitionPreview").textContent = `Current definition: ${state.settings.socialDefinition || DEFAULT_SOCIAL_DEFINITION}`;
 }
 
 function render() {
@@ -740,12 +797,12 @@ function hasSupabaseConfig() {
 
 async function initializeSupabase() {
   if (!hasSupabaseConfig()) {
-    renderAuth("Add Supabase settings to enable login.");
+    renderAuth("Login is unavailable. App configuration is missing.");
     return;
   }
 
   if (!window.supabase?.createClient) {
-    renderAuth("Supabase client library did not load.");
+    renderAuth("Login could not load. Refresh and try again.");
     return;
   }
 
@@ -760,7 +817,7 @@ async function initializeSupabase() {
         },
       });
     } catch (error) {
-      renderAuth(`Supabase config error: ${error.message}`);
+      renderAuth(`Login configuration error: ${error.message}`);
       return;
     }
     supabaseCacheKey = cacheKey;
@@ -787,8 +844,8 @@ async function handleAuthSubmit(event) {
   if (!supabaseClient) {
     await initializeSupabase();
     if (!supabaseClient) {
-      renderAuth("Supabase is not configured. Add SUPABASE_URL and SUPABASE_ANON_KEY in Vercel, redeploy, or paste them in Settings.");
-      showToast("Supabase is not configured");
+      renderAuth("Login is unavailable. App configuration is missing.");
+      showToast("Login unavailable");
       return;
     }
   }
@@ -809,7 +866,7 @@ async function handleAuthSubmit(event) {
     const result = await withTimeout(
       action === "signup" ? supabaseClient.auth.signUp({ ...credentials, ...signupOptions }) : supabaseClient.auth.signInWithPassword(credentials),
       15000,
-      "Supabase auth request timed out. Check SUPABASE_URL, SUPABASE_ANON_KEY, and Auth settings.",
+      "Login request timed out. Check deployment configuration and auth settings.",
     );
     data = result.data;
     error = result.error;
@@ -858,7 +915,7 @@ function renderAuth(message = "") {
   const form = document.querySelector("#authForm");
   const logoutButton = document.querySelector("#logoutButton");
   if (!hasSupabaseConfig()) {
-    status.textContent = message || "Add Supabase settings first";
+    status.textContent = message || "Login unavailable";
     form.classList.remove("is-hidden");
     logoutButton.classList.add("is-hidden");
     return;
@@ -884,7 +941,7 @@ async function syncWithCloud() {
     const cloudEntries = (data || []).map(fromCloudRow);
     mergeCloudEntries(cloudEntries);
     await syncAllToCloud();
-    showToast("Supabase synced");
+    showToast("Synced");
   } catch (error) {
     showToast(`Sync failed: ${error.message}`);
   }
@@ -992,7 +1049,7 @@ async function loadRemoteConfig() {
       saveState();
     }
   } catch {
-    // file:// and offline usage land here; manual Settings config remains available.
+    // file:// and offline usage land here.
   }
 }
 

@@ -27,12 +27,14 @@ export default async function handler(request, response) {
         {
           role: "system",
           content:
-            "You are a practical nutrition planning assistant. Use only supplied profile and logs. Suggest meal timing and rough macros, not diagnosis or medical treatment. If profile data is missing, say the guidance is rough. Return only valid JSON.",
+            "You are a practical nutrition planning assistant. Use only supplied profile, local time, and logs. Suggest meal timing and rough macros, not diagnosis or medical treatment. If the latest meal is late evening or near bedtime, do not recommend another normal meal in 3-5 hours; prefer breakfast next or a small optional pre-bed snack only if hunger/recovery warrants it. If profile data is missing, say the guidance is rough. Return only valid JSON.",
         },
         {
           role: "user",
           content: JSON.stringify({
             profile: payload.profile,
+            localTime: payload.localTime,
+            timeContext: payload.timeContext,
             latestMeal: payload.latestMeal,
             today: payload.today,
             requestedOutput: {

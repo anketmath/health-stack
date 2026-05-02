@@ -56,25 +56,23 @@
             <form class="log-card" id="exerciseForm" data-type="exercise">
               <div class="section-title">
                 <h3>Exercise</h3>
-                <span>Free text</span>
               </div>
               <label>What did you do?
                 <textarea name="text" placeholder="45 min upper body lift, RPE 7, felt strong..." required></textarea>
               </label>
               <button type="submit">Save exercise</button>
-              <div class="extract-preview" data-preview="exercise">Structured extraction appears after saving.</div>
+              <div class="extract-preview" data-preview="exercise"></div>
             </form>
 
             <form class="log-card" id="mealForm" data-type="meal">
               <div class="section-title">
                 <h3>Meal</h3>
-                <span>Free text only</span>
               </div>
               <label>What did you eat?
                 <textarea name="text" placeholder="Dinner 8:15pm: chicken bowl with rice, avocado, salsa..." required></textarea>
               </label>
               <button type="submit">Save meal</button>
-              <div class="extract-preview" data-preview="meal">Structured extraction appears after saving.</div>
+              <div class="extract-preview" data-preview="meal"></div>
               <div class="meal-suggestion" id="mealSuggestionPanel">
                 <strong>Next meal suggestion</strong>
                 <p>Log a meal to get timing and macro guidance.</p>
@@ -84,14 +82,15 @@
             <form class="log-card" id="sleepForm" data-type="sleep">
               <div class="section-title">
                 <h3>Sleep</h3>
-                <span>Subjective score</span>
+                <span>Previous night</span>
               </div>
-              <label>Sleep quality score
+              <div class="definition-note">Enter this in the morning for the sleep you just finished. The supplement stack refers to what you took before bed the previous night.</div>
+              <label>Sleep quality score for last night
                 <input type="number" name="quality" min="1" max="10" placeholder="1-10" required />
               </label>
               <details class="nested-control">
-                <summary>Supplement stack</summary>
-                <label>Current pills or supplements
+                <summary>Pre-bed supplement stack</summary>
+                <label>Supplements taken before bed last night
                   <input name="pills" id="sleepPillsInput" placeholder="Auto-filled from previous sleep log" />
                 </label>
               </details>
@@ -113,7 +112,7 @@
                 </label>
               </div>
               <button type="submit">Save meditation</button>
-              <div class="extract-preview" data-preview="meditation">Structured extraction appears after saving.</div>
+              <div class="extract-preview" data-preview="meditation"></div>
             </form>
 
             <form class="log-card" id="socialForm" data-type="social">
@@ -128,9 +127,8 @@
               <label>Notes
                 <textarea name="notes" placeholder="What happened, urges, exceptions, or context..."></textarea>
               </label>
-              <div class="definition-note" id="socialDefinitionPreview"></div>
               <button type="submit">Save social media</button>
-              <div class="extract-preview" data-preview="social">Structured extraction appears after saving.</div>
+              <div class="extract-preview" data-preview="social"></div>
             </form>
           </div>
         </section>
@@ -251,20 +249,8 @@
           <section class="settings-band">
             <div>
               <h3>Storage note</h3>
-              <p>Logs save locally first, then sync to Supabase when you are logged in.</p>
+              <p>Logs save locally first, then sync securely when you are logged in.</p>
             </div>
-          </section>
-
-          <section class="settings-band">
-            <div>
-              <h3>Supabase</h3>
-              <p>Use your project URL and publishable anon key. Row-level security keeps each user scoped to their own logs.</p>
-            </div>
-            <form id="supabaseForm" class="settings-form">
-              <label>Project URL <input name="supabaseUrl" placeholder="https://your-project.supabase.co" /></label>
-              <label>Anon key <input name="supabaseAnonKey" placeholder="sb_publishable_..." /></label>
-              <button type="submit">Save</button>
-            </form>
           </section>
 
           <section class="settings-band">

@@ -27,7 +27,7 @@ export default async function handler(request, response) {
         {
           role: "system",
           content:
-            "You are a cautious personal health insight assistant. Use only the supplied logs, including social media abstinence when present. Separate observations from hypotheses. Avoid diagnosis, medication instructions, or claims stronger than the data supports. Return only valid JSON.",
+            "You are a cautious personal health insight assistant. Use only the supplied logs, including social media abstinence when present. For sleep logs, supplements are pre-bed inputs taken on the sleepNight before the sleep being rated the following morning. Separate observations from hypotheses. Avoid diagnosis, medication instructions, or claims stronger than the data supports. Return only valid JSON.",
         },
         {
           role: "user",

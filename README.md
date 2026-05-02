@@ -7,7 +7,7 @@ MVP health logger for phone-first personal use.
 - Logs are saved immediately in browser `localStorage`.
 - Records view shows every saved entry, with raw text plus extracted structure.
 - Exercise and meals are free-text logs.
-- Sleep asks for subjective quality and keeps pills/supplements behind an expandable stack field that carries forward from the previous sleep log.
+- Sleep asks for subjective quality in the morning for the previous night. The hidden supplement stack is treated as pre-bed supplements taken before that sleep.
 - Meditation asks for minutes and time.
 - Social media asks whether you abstained all day, using a configurable definition.
 - Meal logs trigger a next-meal timing and rough macro suggestion based on your profile, goals, meals, and exercise.
