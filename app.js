@@ -803,8 +803,21 @@ async function handleAuthSubmit(event) {
 
   renderAuth(action === "signup" ? "Creating account..." : "Logging in...");
   const signupOptions = location.origin.startsWith("http") ? { options: { emailRedirectTo: location.origin } } : {};
-  const { data, error } =
-    action === "signup" ? await supabaseClient.auth.signUp({ ...credentials, ...signupOptions }) : await supabaseClient.auth.signInWithPassword(credentials);
+  let data;
+  let error;
+  try {
+    const result = await withTimeout(
+      action === "signup" ? supabaseClient.auth.signUp({ ...credentials, ...signupOptions }) : supabaseClient.auth.signInWithPassword(credentials),
+      15000,
+      "Supabase auth request timed out. Check SUPABASE_URL, SUPABASE_ANON_KEY, and Auth settings.",
+    );
+    data = result.data;
+    error = result.error;
+  } catch (requestError) {
+    renderAuth(requestError.message);
+    showToast(requestError.message);
+    return;
+  }
 
   if (error) {
     renderAuth(error.message);
@@ -817,6 +830,15 @@ async function handleAuthSubmit(event) {
   renderAuth(action === "signup" && !data.session ? "Check your email to confirm signup." : "");
   if (authUser) await syncWithCloud();
   showToast(action === "signup" && !data.session ? "Check your email to confirm signup" : "Logged in");
+}
+
+function withTimeout(promise, ms, message) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      window.setTimeout(() => reject(new Error(message)), ms);
+    }),
+  ]);
 }
 
 async function signOut() {
