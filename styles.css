@@ -45,7 +45,7 @@ button {
   padding: 28px 22px;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 22px;
   position: sticky;
   top: 0;
   height: 100vh;
@@ -113,37 +113,6 @@ button[type="submit"],
 .nav-tab:hover {
   background: rgba(255, 255, 255, 0.12);
   border-color: rgba(255, 255, 255, 0.14);
-}
-
-.sidebar-card {
-  margin-top: auto;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.11);
-  border-radius: 8px;
-  padding: 18px;
-}
-
-.sidebar-card strong {
-  display: block;
-  font-size: 24px;
-  margin: 8px 0;
-}
-
-.sidebar-card p {
-  color: #cbd2cf;
-  margin: 0;
-  line-height: 1.45;
-}
-
-.auth-card {
-  margin-top: 0;
-}
-
-.auth-card #authStatus {
-  color: #f6f1e8;
-  font-weight: 800;
-  margin: 8px 0 12px;
-  overflow-wrap: anywhere;
 }
 
 .auth-form {
@@ -799,6 +768,14 @@ button[type="submit"] {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.account-form {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+}
+
+#authStatus {
+  margin: 0;
+}
+
 .profile-notes,
 .profile-form button {
   grid-column: 1 / -1;
@@ -966,10 +943,27 @@ pre {
   .sidebar {
     position: static;
     height: auto;
+    padding: 18px 18px 14px;
   }
 
   .nav-tabs {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    overflow-x: auto;
+    gap: 8px;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+  }
+
+  .nav-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-tab {
+    min-width: max-content;
+    text-align: center;
+    border-color: rgba(255, 255, 255, 0.12);
   }
 
   .dashboard-card-row {
@@ -1008,7 +1002,7 @@ pre {
   .workout-row,
   .two-col,
   .settings-form,
-  .nav-tabs {
+  .account-form {
     grid-template-columns: 1fr;
   }
 

@@ -1452,12 +1452,6 @@ function editedFieldsFor(entry, data) {
   return entry.fields || {};
 }
 
-function renderTodaySummary() {
-  const count = state.entries.filter((entry) => entry.date === today()).length;
-  document.querySelector("#todaySummary").textContent = `${count} ${count === 1 ? "entry" : "entries"}`;
-  document.querySelector("#todayHint").textContent = `${state.entries.length} total saved ${state.entries.length === 1 ? "record" : "records"}.`;
-}
-
 function renderPayload() {
   document.querySelector("#llmPayload").value = JSON.stringify(buildInsightPayload(entriesFromLastDays(7)), null, 2);
 }
@@ -1557,7 +1551,6 @@ function isHostedApp() {
 }
 
 function render() {
-  renderTodaySummary();
   renderDashboard();
   renderRecords();
   renderChat();
@@ -1813,24 +1806,29 @@ function fromCloudRow(row) {
 
 async function syncProfileToCloud() {
   if (!supabaseClient || !authUser) return;
-  const { error } = await supabaseClient
-    .from("health_profiles")
-    .upsert(
-      {
-        user_id: authUser.id,
-        profile: state.profile,
-        settings: state.settings,
-        oura: state.oura,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id" },
-    );
+  const baseRow = {
+    user_id: authUser.id,
+    profile: state.profile,
+    settings: state.settings,
+    updated_at: new Date().toISOString(),
+  };
+  let { error } = await supabaseClient.from("health_profiles").upsert({ ...baseRow, oura: state.oura }, { onConflict: "user_id" });
+  if (isMissingOuraColumn(error)) {
+    const retry = await supabaseClient.from("health_profiles").upsert(baseRow, { onConflict: "user_id" });
+    error = retry.error;
+    if (!error) showToast("Profile saved. Run the Supabase Oura migration to sync Oura metadata.");
+  }
   if (error) showToast(`Profile cloud save failed: ${error.message}`);
 }
 
 async function loadProfileFromCloud() {
   if (!supabaseClient || !authUser) return;
-  const { data, error } = await supabaseClient.from("health_profiles").select("*").eq("user_id", authUser.id).maybeSingle();
+  let { data, error } = await supabaseClient.from("health_profiles").select("*").eq("user_id", authUser.id).maybeSingle();
+  if (isMissingOuraColumn(error)) {
+    const fallback = await supabaseClient.from("health_profiles").select("user_id, profile, settings, updated_at").eq("user_id", authUser.id).maybeSingle();
+    data = fallback.data;
+    error = fallback.error;
+  }
   if (error) {
     showToast(`Profile sync failed: ${error.message}`);
     return;
@@ -1844,6 +1842,10 @@ async function loadProfileFromCloud() {
   } else {
     await syncProfileToCloud();
   }
+}
+
+function isMissingOuraColumn(error) {
+  return /oura|schema cache|column/i.test(error?.message || "") && /could not find|does not exist|schema cache/i.test(error?.message || "");
 }
 
 async function loadRemoteConfig() {

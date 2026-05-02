@@ -24,24 +24,6 @@
           <button class="nav-tab" data-view="insights">Insights</button>
           <button class="nav-tab" data-view="settings">Settings</button>
         </nav>
-        <div class="sidebar-card">
-          <span class="eyebrow">Today</span>
-          <strong id="todaySummary">0 entries</strong>
-          <p id="todayHint">Every saved entry is stored locally on this device.</p>
-        </div>
-        <div class="sidebar-card auth-card">
-          <span class="eyebrow">Account</span>
-          <div id="authStatus">Not connected</div>
-          <form id="authForm" class="auth-form">
-            <input type="email" name="email" placeholder="Email" autocomplete="email" required />
-            <input type="password" name="password" placeholder="Password" autocomplete="current-password" required />
-            <div class="button-row">
-              <button type="submit" data-auth-action="signin">Log in</button>
-              <button class="secondary-button" type="submit" data-auth-action="signup">Sign up</button>
-            </div>
-          </form>
-          <button id="logoutButton" class="secondary-button is-hidden" type="button">Log out</button>
-        </div>
       </aside>
 
       <main>
@@ -232,6 +214,20 @@
               <h2>Profile and app settings</h2>
             </div>
           </header>
+
+          <section class="settings-band">
+            <div>
+              <h3>Account</h3>
+              <p id="authStatus">Not connected</p>
+            </div>
+            <form id="authForm" class="settings-form account-form">
+              <input type="email" name="email" placeholder="Email" autocomplete="email" required />
+              <input type="password" name="password" placeholder="Password" autocomplete="current-password" required />
+              <button type="submit" data-auth-action="signin">Log in</button>
+              <button class="secondary-button" type="submit" data-auth-action="signup">Sign up</button>
+            </form>
+            <button id="logoutButton" class="secondary-button is-hidden" type="button">Log out</button>
+          </section>
 
           <section class="settings-band">
             <div>
