@@ -252,12 +252,15 @@ function createEntry(form) {
     extraction: null,
   };
   entry.extraction = heuristicExtraction(entry);
+  if (type === "sleep") maybeSaveSleepStackToProfile(formData);
   return entry;
 }
 
 function rawTextFor(type, data) {
   if (type === "sleep") {
-    const pills = data.pills?.trim() ? ` Pre-bed supplements taken the previous night: ${data.pills.trim()}.` : "";
+    const stack = sleepStackForForm(data);
+    const source = data.supplementModified === "yes" ? "modified from profile" : "assumed from profile";
+    const pills = stack ? ` Pre-bed supplements (${source}) taken the previous night: ${stack}.` : "";
     return `Subjective sleep quality for last night, entered the following morning: ${data.quality}/10.${pills}`;
   }
   if (type === "meditation") return `${data.minutes} minutes at ${data.time}.`;
@@ -271,9 +274,15 @@ function rawTextFor(type, data) {
 
 function fieldsFor(type, data) {
   if (type === "sleep") {
+    const stack = sleepStackForForm(data);
+    const modified = data.supplementModified === "yes";
     return {
       quality: Number(data.quality),
-      pills: data.pills?.trim() || "",
+      pills: stack,
+      assumedProfileStack: data.assumedPills?.trim() || state.profile.sleepPillStack || "",
+      supplementModified: modified,
+      modifiedPills: modified ? data.modifiedPills?.trim() || "" : "",
+      savedToProfile: modified && data.saveSupplementStack === "yes",
       sleepNight: previousDate(today()),
       scoreEnteredOn: today(),
       supplementTiming: "Taken before bed on the sleepNight, before the sleep being rated the following morning.",
@@ -282,6 +291,17 @@ function fieldsFor(type, data) {
   if (type === "meditation") return { minutes: Number(data.minutes), time: data.time };
   if (type === "social") return { abstained: data.abstained === "yes", definition: state.settings.socialDefinition, notes: data.notes?.trim() || "" };
   return {};
+}
+
+function sleepStackForForm(data) {
+  return data.supplementModified === "yes" ? data.modifiedPills?.trim() || data.assumedPills?.trim() || "" : data.assumedPills?.trim() || state.profile.sleepPillStack || "";
+}
+
+function maybeSaveSleepStackToProfile(data) {
+  if (data.supplementModified !== "yes" || data.saveSupplementStack !== "yes" || !data.modifiedPills?.trim()) return;
+  state.profile.sleepPillStack = data.modifiedPills.trim();
+  saveState();
+  syncProfileToCloud();
 }
 
 async function extractEntry(entry) {
@@ -320,6 +340,10 @@ function heuristicExtraction(entry) {
       sleepNight: entry.fields.sleepNight,
       scoreEnteredOn: entry.fields.scoreEnteredOn,
       supplementTiming: entry.fields.supplementTiming,
+      assumedProfileStack: entry.fields.assumedProfileStack || null,
+      supplementModified: Boolean(entry.fields.supplementModified),
+      modifiedPills: entry.fields.modifiedPills || null,
+      savedToProfile: Boolean(entry.fields.savedToProfile),
     };
   }
   if (entry.type === "meditation") {
@@ -829,7 +853,40 @@ function estimateMealFromText(text) {
 }
 
 function nutritionTotals(entries) {
-  return entries.reduce((total, entry) => addMacros(total, entry.mealSuggestion?.currentMeal || entry.mealSuggestion?.nutritionEstimate || {}), { calories: 0, protein: 0, carbs: 0, fat: 0 });
+  return entries.reduce((total, entry) => addMacros(total, macrosForMeal(entry)), { calories: 0, protein: 0, carbs: 0, fat: 0 });
+}
+
+function macrosForMeal(entry) {
+  const suggestion = entry.mealSuggestion || {};
+  const extraction = entry.extraction || {};
+  return (
+    normalizeMacros(suggestion.adjustedMeal) ||
+    normalizeMacros(suggestion.currentMeal) ||
+    normalizeMacros(suggestion.nutritionEstimate) ||
+    normalizeMacros(suggestion.estimate) ||
+    normalizeMacros(suggestion.macros) ||
+    normalizeMacros(extraction.nutrition) ||
+    normalizeMacros(extraction.macros) ||
+    normalizeMacros(extraction.currentMeal) ||
+    normalizeMacros(entry.fields?.nutrition) ||
+    normalizeMacros(entry.fields?.macros) ||
+    {}
+  );
+}
+
+function normalizeMacros(value) {
+  if (!value || typeof value !== "object") return null;
+  const calories = Number(value.calories ?? value.kcal ?? value.calorieEstimate);
+  const protein = Number(value.protein ?? value.proteinGrams);
+  const carbs = Number(value.carbs ?? value.carbohydrates ?? value.carbGrams);
+  const fat = Number(value.fat ?? value.fats ?? value.fatGrams);
+  if (![calories, protein, carbs, fat].some(Number.isFinite)) return null;
+  return {
+    calories: Number.isFinite(calories) ? calories : 0,
+    protein: Number.isFinite(protein) ? protein : 0,
+    carbs: Number.isFinite(carbs) ? carbs : 0,
+    fat: Number.isFinite(fat) ? fat : 0,
+  };
 }
 
 function addMacros(a = {}, b = {}) {
@@ -976,6 +1033,9 @@ function supplementContext(days = 30) {
     scoreEnteredOn: entry.fields?.scoreEnteredOn || entry.date,
     sleepQuality: entry.fields?.quality ?? entry.extraction?.quality ?? entry.extraction?.sleepQuality ?? null,
     pills: normalizeStack(entry.fields?.pills || entry.extraction?.pills || entry.extraction?.supplements?.join(", ") || ""),
+    assumedProfileStack: normalizeStack(entry.fields?.assumedProfileStack || ""),
+    supplementModified: Boolean(entry.fields?.supplementModified),
+    savedToProfile: Boolean(entry.fields?.savedToProfile),
     supplementTiming: entry.fields?.supplementTiming || "Taken before bed on sleepNight.",
   }));
   const changes = [];
@@ -1085,7 +1145,7 @@ function renderDashboard() {
       status: dietChecked ? "green" : meals.length ? "yellow" : "red",
       summary: `${nutrition.calories || 0} cal · ${nutrition.protein || 0}g protein`,
       streak: dietStreak,
-      items: dietItems(nutrition, dietTarget),
+      items: dietItems(nutrition, dietTarget, meals),
     },
     {
       title: "Meditation",
@@ -1104,7 +1164,7 @@ function renderDashboard() {
         { label: "Oura sleep", value: selectedOura?.dailySleep?.score ? `${selectedOura.dailySleep.score}` : "-" },
         { label: "Readiness", value: selectedOura?.dailyReadiness?.score ? `${selectedOura.dailyReadiness.score}` : "-" },
       ],
-      items: [],
+      items: sleepStackItems(sleep),
       order: 3,
     },
     {
@@ -1199,12 +1259,34 @@ function dietInTarget(nutrition, meals, target) {
   return nutrition.calories >= target.calories.min && nutrition.calories <= target.calories.max && nutrition.protein >= target.protein.min && nutrition.protein <= target.protein.max;
 }
 
-function dietItems(nutrition, target) {
+function dietItems(nutrition, target, meals = []) {
   return [
+    ...meals.map((meal) => mealSummaryItem(meal)),
     `Target: ${target.calories.min}-${target.calories.max} cal · ${target.protein.min}-${target.protein.max}g protein`,
     `${target.source || "Target"}: ${target.reasoning || "Based on profile, goal, and selected-day exercise."}`,
     `Actual: ${nutrition.calories || 0} cal · ${nutrition.protein || 0}g protein`,
   ];
+}
+
+function mealSummaryItem(meal) {
+  const macros = macrosForMeal(meal);
+  const summary = meal.extraction?.summary || meal.rawText || "Meal";
+  const label = summary.length > 70 ? `${summary.slice(0, 67).trim()}...` : summary;
+  return `${label}: ${Math.round(macros.calories || 0)} cal · ${Math.round(macros.protein || 0)}g protein`;
+}
+
+function sleepStackItems(sleep) {
+  const profileStack = state.profile.sleepPillStack?.trim();
+  const items = [];
+  if (profileStack) items.push(`Profile stack: ${profileStack}`);
+  if (sleep?.fields?.supplementModified) {
+    items.push(`Changed last night: ${sleep.fields.modifiedPills || sleep.fields.pills || "modified stack logged"}`);
+    if (sleep.fields.savedToProfile) items.push("Saved to profile from this sleep log.");
+  } else if (sleep?.fields?.pills) {
+    items.push("Used profile stack for this night.");
+  }
+  if (!items.length) items.push("No sleep stack saved in profile yet.");
+  return items;
 }
 
 async function ensureDietTargetForDate(date) {
@@ -1316,7 +1398,7 @@ function renderScorecard(card) {
         <strong>${escapeHtml(card.title)}</strong>
         ${card.summary ? `<small>${escapeHtml(card.summary)}</small>` : ""}
       </span>
-      ${card.noStreak ? "" : `<span class="streak-chip"><small>Streak</small><b>${escapeHtml(card.streak || 0)}d</b></span>`}
+      ${card.noStreak ? "" : `<span class="streak-chip">${escapeHtml(card.streak || 0)}d</span>`}
     </summary>
     <div class="scorecard-detail">
       ${card.values ? renderDashboardValues(card.values) : ""}
@@ -1443,6 +1525,7 @@ function editedFieldsFor(entry, data) {
       ...entry.fields,
       quality: Number(data.quality),
       pills: data.pills?.trim() || "",
+      supplementModified: entry.fields?.supplementModified || false,
       sleepNight: entry.fields?.sleepNight || previousDate(data.date),
       scoreEnteredOn: data.date,
       supplementTiming: "Taken before bed on the sleepNight, before the sleep being rated the following morning.",
@@ -1568,8 +1651,7 @@ function prepareDefaults() {
     day: "numeric",
   });
   document.querySelector('#meditationForm input[name="time"]').value = nowTime();
-  const previousSleep = [...state.entries].reverse().find((entry) => entry.type === "sleep" && entry.fields?.pills);
-  document.querySelector("#sleepPillsInput").value = previousSleep?.fields?.pills || "";
+  document.querySelector("#sleepPillsInput").value = state.profile.sleepPillStack || "";
 }
 
 function labelFor(type) {

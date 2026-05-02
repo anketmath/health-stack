@@ -549,6 +549,40 @@ label,
 }
 
 .streak-chip {
+  display: inline-flex;
+  align-items: baseline;
+  justify-self: end;
+  color: var(--muted);
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.streak-chip::after {
+  content: " streak";
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--muted);
+  margin-left: 3px;
+}
+
+.scorecard[data-status="green"] .streak-chip {
+  color: var(--green);
+}
+
+.scorecard[data-status="yellow"] .streak-chip {
+  color: var(--gold);
+}
+
+.scorecard[data-status="red"] .streak-chip {
+  color: var(--rose);
+}
+
+.legacy-streak-chip {
   display: inline-grid;
   grid-template-columns: auto auto;
   align-items: center;
@@ -560,7 +594,7 @@ label,
   white-space: nowrap;
 }
 
-.streak-chip b {
+.legacy-streak-chip b {
   min-width: 36px;
   min-height: 30px;
   display: grid;
@@ -572,7 +606,7 @@ label,
   line-height: 1;
 }
 
-.streak-chip small {
+.legacy-streak-chip small {
   font-size: 10px;
   font-weight: 800;
   color: var(--muted);
@@ -1067,7 +1101,7 @@ pre {
 
   .scorecard .streak-chip {
     grid-column: 2;
-    justify-self: start;
+    justify-self: end;
   }
 
   .dashboard-values {

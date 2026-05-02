@@ -95,8 +95,19 @@
               </label>
               <details class="nested-control">
                 <summary>Pre-bed supplement stack</summary>
-                <label>Supplements taken before bed last night
-                  <input name="pills" id="sleepPillsInput" placeholder="Auto-filled from previous sleep log" />
+                <label>Assumed from profile
+                  <input name="assumedPills" id="sleepPillsInput" readonly placeholder="Add your sleep stack in Profile" />
+                </label>
+                <label class="check-row">
+                  <input type="checkbox" name="supplementModified" value="yes" />
+                  <span>Modified last night</span>
+                </label>
+                <label>What changed?
+                  <textarea name="modifiedPills" placeholder="Only fill this out if last night's stack was different"></textarea>
+                </label>
+                <label class="check-row">
+                  <input type="checkbox" name="saveSupplementStack" value="yes" />
+                  <span>Save this as my profile stack going forward</span>
                 </label>
               </details>
               <button type="submit">Save sleep</button>
