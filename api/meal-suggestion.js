@@ -27,7 +27,7 @@ export default async function handler(request, response) {
         {
           role: "system",
           content:
-            "You are a practical nutrition planning assistant. Use only supplied profile, local time, and logs. Suggest meal timing and rough macros, not diagnosis or medical treatment. If the latest meal is late evening or near bedtime, do not recommend another normal meal in 3-5 hours; prefer breakfast next or a small optional pre-bed snack only if hunger/recovery warrants it. If profile data is missing, say the guidance is rough. Return only valid JSON.",
+            "You are a practical nutrition planning assistant. Estimate current-meal calories/protein/carbs/fat, day-so-far totals, and the next meal time/macros. Use only supplied profile, local time, prior nutrition, exercise, goals, and logs. Make suggestions plausible for the user's day and goal, especially fat reduction or hypertrophy. If the latest meal is late evening or near bedtime, do not recommend another normal meal in 3-5 hours; prefer breakfast next or a small optional pre-bed snack only if hunger/recovery warrants it. If profile data is missing, say the guidance is rough. Return only valid JSON.",
         },
         {
           role: "user",
@@ -36,10 +36,12 @@ export default async function handler(request, response) {
             localTime: payload.localTime,
             timeContext: payload.timeContext,
             latestMeal: payload.latestMeal,
+            priorNutrition: payload.priorNutrition,
             today: payload.today,
             requestedOutput: {
-              nextMealTiming: "short timing suggestion",
-              macros: "rough protein/carbs/fats grams",
+              currentMeal: { calories: "number", protein: "grams", carbs: "grams", fat: "grams" },
+              dayTotals: { calories: "number", protein: "grams", carbs: "grams", fat: "grams" },
+              nextMeal: { time: "specific local time or breakfast tomorrow", calories: "number", protein: "grams", carbs: "grams", fat: "grams" },
               reasoning: "brief explanation tied to today's meals/exercise/goals",
               confidence: "number 0-1",
             },
@@ -54,12 +56,44 @@ export default async function handler(request, response) {
             type: "object",
             additionalProperties: false,
             properties: {
-              nextMealTiming: { type: "string" },
-              macros: { type: "string" },
+              currentMeal: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  calories: { type: "number" },
+                  protein: { type: "number" },
+                  carbs: { type: "number" },
+                  fat: { type: "number" },
+                },
+                required: ["calories", "protein", "carbs", "fat"],
+              },
+              dayTotals: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  calories: { type: "number" },
+                  protein: { type: "number" },
+                  carbs: { type: "number" },
+                  fat: { type: "number" },
+                },
+                required: ["calories", "protein", "carbs", "fat"],
+              },
+              nextMeal: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  time: { type: "string" },
+                  calories: { type: "number" },
+                  protein: { type: "number" },
+                  carbs: { type: "number" },
+                  fat: { type: "number" },
+                },
+                required: ["time", "calories", "protein", "carbs", "fat"],
+              },
               reasoning: { type: "string" },
               confidence: { type: "number" },
             },
-            required: ["nextMealTiming", "macros", "reasoning", "confidence"],
+            required: ["currentMeal", "dayTotals", "nextMeal", "reasoning", "confidence"],
           },
           strict: true,
         },

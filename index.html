@@ -17,7 +17,8 @@
           </div>
         </div>
         <nav class="nav-tabs" aria-label="Views">
-          <button class="nav-tab is-active" data-view="log">Log</button>
+          <button class="nav-tab is-active" data-view="dashboard">Dashboard</button>
+          <button class="nav-tab" data-view="log">Log</button>
           <button class="nav-tab" data-view="records">Records</button>
           <button class="nav-tab" data-view="chat">Chat</button>
           <button class="nav-tab" data-view="insights">Insights</button>
@@ -44,7 +45,23 @@
       </aside>
 
       <main>
-        <section class="view is-visible" id="logView">
+        <section class="view is-visible" id="dashboardView">
+          <header class="page-header">
+            <div>
+              <p class="eyebrow">Last 14 days</p>
+              <h2>Health dashboard</h2>
+            </div>
+          </header>
+
+          <form id="topAskForm" class="top-ask">
+            <input name="question" placeholder="Ask anything about your recent health data..." required />
+            <button type="submit">Ask</button>
+          </form>
+
+          <div class="dashboard-grid" id="dashboardGrid"></div>
+        </section>
+
+        <section class="view" id="logView">
           <header class="page-header">
             <div>
               <p class="eyebrow" id="currentDateLabel">Today</p>
@@ -57,22 +74,28 @@
               <div class="section-title">
                 <h3>Exercise</h3>
               </div>
-              <label>What did you do?
-                <textarea name="text" placeholder="45 min upper body lift, RPE 7, felt strong..." required></textarea>
-              </label>
+              <textarea name="text" aria-label="Exercise log" placeholder="45 min upper body lift, RPE 7, felt strong..." required></textarea>
               <button type="submit">Save exercise</button>
-              <div class="extract-preview" data-preview="exercise"></div>
             </form>
+
+            <section class="log-card workout-card">
+              <div class="section-title">
+                <h3>Home workout</h3>
+                <span>Personalized</span>
+              </div>
+              <form id="workoutForm" class="stacked-form">
+                <textarea name="workoutRequest" aria-label="Workout request" placeholder="Optional: feeling tired, bias upper body, 35 minutes, avoid legs..."></textarea>
+                <button type="submit">Suggest workout</button>
+              </form>
+              <div id="workoutPanel" class="workout-panel"></div>
+            </section>
 
             <form class="log-card" id="mealForm" data-type="meal">
               <div class="section-title">
                 <h3>Meal</h3>
               </div>
-              <label>What did you eat?
-                <textarea name="text" placeholder="Dinner 8:15pm: chicken bowl with rice, avocado, salsa..." required></textarea>
-              </label>
+              <textarea name="text" aria-label="Meal log" placeholder="Dinner 8:15pm: chicken bowl with rice, avocado, salsa..." required></textarea>
               <button type="submit">Save meal</button>
-              <div class="extract-preview" data-preview="meal"></div>
               <div class="meal-suggestion" id="mealSuggestionPanel">
                 <strong>Next meal suggestion</strong>
                 <p>Log a meal to get timing and macro guidance.</p>
@@ -84,7 +107,6 @@
                 <h3>Sleep</h3>
                 <span>Previous night</span>
               </div>
-              <div class="definition-note">Enter this in the morning for the sleep you just finished. The supplement stack refers to what you took before bed the previous night.</div>
               <label>Sleep quality score for last night
                 <input type="number" name="quality" min="1" max="10" placeholder="1-10" required />
               </label>
@@ -95,7 +117,6 @@
                 </label>
               </details>
               <button type="submit">Save sleep</button>
-              <div class="extract-preview" data-preview="sleep">Oura metrics can be added by sync later.</div>
             </form>
 
             <form class="log-card" id="meditationForm" data-type="meditation">
@@ -112,7 +133,6 @@
                 </label>
               </div>
               <button type="submit">Save meditation</button>
-              <div class="extract-preview" data-preview="meditation"></div>
             </form>
 
             <form class="log-card" id="socialForm" data-type="social">
@@ -128,7 +148,6 @@
                 <textarea name="notes" placeholder="What happened, urges, exceptions, or context..."></textarea>
               </label>
               <button type="submit">Save social media</button>
-              <div class="extract-preview" data-preview="social"></div>
             </form>
           </div>
         </section>
@@ -209,7 +228,7 @@
           <header class="page-header">
             <div>
               <p class="eyebrow">Deploy</p>
-              <h2>Phone-ready settings</h2>
+              <h2>Profile and app settings</h2>
             </div>
           </header>
 
@@ -227,8 +246,15 @@
 
           <section class="settings-band">
             <div>
-              <h3>Nutrition profile</h3>
-              <p>Used for meal timing and macro suggestions.</p>
+              <h3>Sleep logging</h3>
+              <p>Enter sleep quality in the morning for the sleep you just finished. The pre-bed supplement stack refers to what you took before bed the previous night.</p>
+            </div>
+          </section>
+
+          <section class="settings-band">
+            <div>
+              <h3>Profile</h3>
+              <p>Used for meal guidance, workouts, insights, and chat.</p>
             </div>
             <form id="profileForm" class="settings-form profile-form">
               <label>Age <input type="number" name="age" min="1" max="120" /></label>
@@ -239,10 +265,28 @@
               <label>Activity level <input name="activityLevel" placeholder="Sedentary, active, athlete..." /></label>
               <label>Primary goal <input name="goal" placeholder="Fat loss, lean bulk, maintenance..." /></label>
               <label>Diet preferences <input name="dietPreferences" placeholder="Vegetarian, high protein, no dairy..." /></label>
+              <label>Sleep pill stack <input name="sleepPillStack" placeholder="Magnesium, glycine, etc." /></label>
+              <label>Home equipment <input name="homeEquipment" placeholder="Adjustable dumbbells, bench, bands..." /></label>
+              <label>Familiar exercises <input name="familiarExercises" placeholder="Push-ups, DB rows, goblet squat..." /></label>
               <label class="profile-notes">Notes
                 <textarea name="profileNotes" placeholder="Meal schedule, allergies, target calories/macros, training priorities..."></textarea>
               </label>
               <button type="submit">Save profile</button>
+            </form>
+          </section>
+
+          <section class="settings-band">
+            <div>
+              <h3>Reminders</h3>
+              <p>Local browser reminders work while the app is open. Phone-level push notifications need a later installable app step.</p>
+            </div>
+            <form id="reminderForm" class="settings-form profile-form">
+              <label>Sleep log <input type="time" name="sleep" value="08:00" /></label>
+              <label>Breakfast/lunch <input type="time" name="midday" value="13:00" /></label>
+              <label>Dinner + summary <input type="time" name="dinner" value="19:00" /></label>
+              <label>End-of-day summary <input type="time" name="endOfDay" value="21:30" /></label>
+              <button type="submit">Save reminders</button>
+              <button id="enableNotificationsButton" class="secondary-button" type="button">Enable notifications</button>
             </form>
           </section>
 

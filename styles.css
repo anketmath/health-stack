@@ -206,6 +206,13 @@ main {
   gap: 8px;
 }
 
+.top-ask {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
 .table-tab,
 .secondary-button,
 .import-button {
@@ -231,6 +238,7 @@ button[type="submit"] {
 .prompt-panel,
 .settings-band,
 .chat-panel,
+.dashboard-card,
 .record-card,
 .recommendation-card {
   background: var(--panel);
@@ -300,6 +308,71 @@ label,
   border-left: 5px solid var(--green);
 }
 
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.dashboard-card {
+  padding: 18px;
+  border-left: 5px solid var(--green);
+}
+
+.dashboard-card[data-tone="blue"] {
+  border-left-color: var(--blue);
+}
+
+.dashboard-card[data-tone="gold"] {
+  border-left-color: var(--gold);
+}
+
+.dashboard-card[data-tone="rose"] {
+  border-left-color: var(--rose);
+}
+
+.dashboard-card strong {
+  display: block;
+  font-size: 30px;
+  line-height: 1;
+  margin: 10px 0 8px;
+}
+
+.dashboard-card p {
+  margin: 0 0 16px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.dot-row {
+  display: grid;
+  grid-template-columns: repeat(14, 1fr);
+  gap: 5px;
+}
+
+.day-dot {
+  display: block;
+  aspect-ratio: 1;
+  border-radius: 4px;
+  background: #ece7dd;
+  border: 1px solid var(--line);
+}
+
+.day-dot.is-active {
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.day-dot.is-good {
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
+.day-dot.is-low {
+  background: var(--rose);
+  border-color: var(--rose);
+}
+
 .log-card {
   padding: 20px;
   display: grid;
@@ -349,23 +422,6 @@ textarea {
 
 button[type="submit"] {
   justify-self: start;
-}
-
-.extract-preview {
-  color: var(--muted);
-  background: #f7f4ee;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 12px;
-  min-height: 44px;
-  white-space: pre-wrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.extract-preview:empty {
-  display: none;
 }
 
 .insights-layout {
@@ -428,6 +484,33 @@ button[type="submit"] {
 
 .meal-suggestion p {
   margin: 0;
+}
+
+.stacked-form,
+.workout-panel,
+.workout-draft,
+.workout-list {
+  display: grid;
+  gap: 12px;
+}
+
+.workout-card {
+  grid-column: 1 / -1;
+}
+
+.workout-draft h4,
+.workout-draft p {
+  margin: 0;
+}
+
+.workout-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) minmax(120px, 0.8fr) minmax(140px, 1fr) minmax(90px, 0.6fr) minmax(90px, 0.6fr);
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
 }
 
 .profile-form {
@@ -599,7 +682,11 @@ pre {
   }
 
   .nav-tabs {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .dashboard-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .insights-layout,
@@ -622,6 +709,9 @@ pre {
   }
 
   .log-grid,
+  .dashboard-grid,
+  .top-ask,
+  .workout-row,
   .two-col,
   .settings-form,
   .nav-tabs {
