@@ -18,25 +18,50 @@ export default async function handler(request, response) {
     start_date: toDate(startDate),
     end_date: toDate(endDate),
   });
+  const dateTimeParams = new URLSearchParams({
+    start_datetime: `${toDate(startDate)}T00:00:00-08:00`,
+    end_datetime: `${toDate(endDate)}T23:59:59-08:00`,
+  });
 
   try {
-    const [dailySleep, dailyReadiness, dailyActivity] = await Promise.all([
-      fetchOura(`/v2/usercollection/daily_sleep?${params}`, token),
-      fetchOura(`/v2/usercollection/daily_readiness?${params}`, token),
-      fetchOura(`/v2/usercollection/daily_activity?${params}`, token),
+    const collections = await Promise.all([
+      fetchOuraCollection("dailySleep", `/v2/usercollection/daily_sleep?${params}`, token),
+      fetchOuraCollection("sleep", `/v2/usercollection/sleep?${params}`, token),
+      fetchOuraCollection("dailyReadiness", `/v2/usercollection/daily_readiness?${params}`, token),
+      fetchOuraCollection("dailyActivity", `/v2/usercollection/daily_activity?${params}`, token),
+      fetchOuraCollection("dailySpo2", `/v2/usercollection/daily_spo2?${params}`, token),
+      fetchOuraCollection("dailyStress", `/v2/usercollection/daily_stress?${params}`, token),
+      fetchOuraCollection("sleepTime", `/v2/usercollection/sleep_time?${params}`, token),
+      fetchOuraCollection("vo2Max", `/v2/usercollection/vo2_max?${params}`, token),
+      fetchOuraCollection("workout", `/v2/usercollection/workout?${params}`, token),
+      fetchOuraCollection("sessions", `/v2/usercollection/sessions?${params}`, token),
+      fetchOuraCollection("heartrate", `/v2/usercollection/heartrate?${dateTimeParams}`, token),
     ]);
+    const personalInfo = await fetchOuraOptional(`/v2/usercollection/personal_info`, token);
+    const groups = Object.fromEntries(collections.map((item) => [item.key, item.data]));
 
     response.status(200).json({
       startDate: toDate(startDate),
       endDate: toDate(endDate),
-      records: normalizeRecords({
-        dailySleep: dailySleep.data || [],
-        dailyReadiness: dailyReadiness.data || [],
-        dailyActivity: dailyActivity.data || [],
-      }),
+      personalInfo: personalInfo.data || null,
+      unavailable: collections.filter((item) => item.error).map((item) => ({ key: item.key, error: item.error })),
+      records: normalizeRecords(groups),
     });
   } catch (error) {
     response.status(error.status || 502).json({ error: error.message || "Oura request failed" });
+  }
+}
+
+async function fetchOuraCollection(key, path, token) {
+  const result = await fetchOuraOptional(path, token);
+  return { key, data: result.data?.data || [], error: result.error || null };
+}
+
+async function fetchOuraOptional(path, token) {
+  try {
+    return { data: await fetchOura(path, token), error: null };
+  } catch (error) {
+    return { data: null, error: error.message || "Unavailable" };
   }
 }
 
@@ -58,14 +83,23 @@ function normalizeRecords(groups) {
   const byDate = new Map();
   Object.entries(groups).forEach(([key, records]) => {
     records.forEach((record) => {
-      const date = record.day || record.date;
+      const date = recordDay(record);
       if (!date) return;
       const existing = byDate.get(date) || { date };
-      existing[key] = record;
+      if (key.startsWith("daily")) existing[key] = record;
+      else {
+        existing[key] ||= [];
+        existing[key].push(record);
+      }
       byDate.set(date, existing);
     });
   });
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function recordDay(record) {
+  const value = record.day || record.date || record.start_date || record.start_datetime || record.timestamp || record.bedtime_start;
+  return typeof value === "string" ? value.slice(0, 10) : "";
 }
 
 function clampDays(value) {

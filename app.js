@@ -853,7 +853,7 @@ function estimateMealFromText(text) {
 }
 
 function nutritionTotals(entries) {
-  const latestTotals = latestMealDayTotals(entries);
+  const latestTotals = latestMealDayTotals(entries)?.macros;
   if (latestTotals) return latestTotals;
   return entries.reduce((total, entry) => addMacros(total, macrosForMeal(entry)), { calories: 0, protein: 0, carbs: 0, fat: 0 });
 }
@@ -861,7 +861,10 @@ function nutritionTotals(entries) {
 function latestMealDayTotals(entries) {
   return [...entries]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .map((entry) => normalizeMacros(entry.mealSuggestion?.dayTotals) || normalizeMacros(entry.mealSuggestion?.dailyTotals) || normalizeMacros(entry.mealSuggestion?.totalForDay) || normalizeMacros(entry.extraction?.dayTotals))
+    .map((entry) => {
+      const macros = normalizeMacros(entry.mealSuggestion?.dayTotals) || normalizeMacros(entry.mealSuggestion?.dailyTotals) || normalizeMacros(entry.mealSuggestion?.totalForDay) || normalizeMacros(entry.extraction?.dayTotals);
+      return macros ? { entry, macros } : null;
+    })
     .find(Boolean);
 }
 
@@ -1108,6 +1111,8 @@ function ouraContext(days = 14) {
   const records = (state.oura.records || []).filter((record) => allowedDates.has(record.date)).sort((a, b) => a.date.localeCompare(b.date));
   return {
     lastSync: state.oura.lastSync || "",
+    personalInfo: state.oura.personalInfo || null,
+    unavailable: state.oura.unavailable || [],
     records,
     averageSleepScore: average(records.map((record) => record.dailySleep?.score)),
     averageReadiness: average(records.map((record) => record.dailyReadiness?.score)),
@@ -1149,7 +1154,7 @@ function renderDashboard() {
       status: exerciseLogged ? "green" : "red",
       summary: "",
       streak: exerciseStreak,
-      items: exerciseItems(byType.exercise),
+      items: [...ouraActivityItems(selectedOura), ...exerciseItems(byType.exercise)],
     },
     {
       title: "Diet",
@@ -1271,19 +1276,51 @@ function dietInTarget(nutrition, meals, target) {
 }
 
 function dietItems(nutrition, target, meals = []) {
+  const latestTotals = latestMealDayTotals(meals);
+  const mealItems = latestTotals ? meals.map((meal) => mealSummaryItem(meal, meal.id === latestTotals.entry.id)) : meals.map((meal) => mealSummaryItem(meal, false));
   return [
-    ...meals.map((meal) => mealSummaryItem(meal)),
+    ...mealItems,
+    latestTotals ? `Latest corrected day total: ${formatMacroLine("", latestTotals.macros).replace(/^: /, "")}` : "",
     `Target: ${target.calories.min}-${target.calories.max} cal · ${target.protein.min}-${target.protein.max}g protein`,
     `${target.source || "Target"}: ${target.reasoning || "Based on profile, goal, and selected-day exercise."}`,
     `Actual: ${nutrition.calories || 0} cal · ${nutrition.protein || 0}g protein`,
-  ];
+  ].filter(Boolean);
 }
 
-function mealSummaryItem(meal) {
+function mealSummaryItem(meal, hasCorrectedDayTotal = false) {
   const macros = macrosForMeal(meal);
   const summary = meal.extraction?.summary || meal.rawText || "Meal";
   const label = summary.length > 70 ? `${summary.slice(0, 67).trim()}...` : summary;
-  return `${label}: ${Math.round(macros.calories || 0)} cal · ${Math.round(macros.protein || 0)}g protein`;
+  const suffix = hasCorrectedDayTotal ? " · day total corrected here" : "";
+  return `${label}: ${Math.round(macros.calories || 0)} cal · ${Math.round(macros.protein || 0)}g protein${suffix}`;
+}
+
+function ouraActivityItems(oura) {
+  const activity = oura?.dailyActivity;
+  if (!activity) return [];
+  const activeSeconds = secondsFromOuraActivity(activity);
+  return [
+    `Steps: ${formatInteger(activity.steps)}`,
+    `Activity time: ${formatDuration(activeSeconds)}`,
+    `Total burn: ${formatInteger(activity.total_calories)} cal · Active burn: ${formatInteger(activity.active_calories)} cal`,
+  ];
+}
+
+function secondsFromOuraActivity(activity) {
+  return ["high_activity_time", "medium_activity_time", "low_activity_time", "non_wear_time"].reduce((total, key) => total + (Number(activity[key]) || 0), 0);
+}
+
+function formatInteger(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number).toLocaleString() : "-";
+}
+
+function formatDuration(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value <= 0) return "-";
+  const hours = Math.floor(value / 3600);
+  const minutes = Math.round((value % 3600) / 60);
+  return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
 function sleepStackItems(sleep) {
@@ -1609,6 +1646,8 @@ async function syncOura(days = 14, options = {}) {
     state.oura = {
       lastSync: today(),
       lastSyncAt: new Date().toISOString(),
+      personalInfo: data.personalInfo || state.oura.personalInfo || null,
+      unavailable: data.unavailable || [],
       records: mergeOuraRecords(state.oura.records || [], data.records || []),
     };
     saveState();
