@@ -1076,7 +1076,7 @@ function renderDashboard() {
     {
       title: "Exercise",
       status: exerciseLogged ? "green" : "red",
-      summary: `${exerciseStreak}d streak`,
+      summary: "",
       streak: exerciseStreak,
       items: exerciseItems(byType.exercise),
     },
@@ -1090,21 +1090,14 @@ function renderDashboard() {
     {
       title: "Meditation",
       status: medMinutes > 0 ? "green" : "red",
-      summary: `${meditationStreak}d streak · ${medMinutes || 0} min`,
+      summary: `${medMinutes || 0} min`,
       streak: meditationStreak,
       items: rawItems(byType.meditation),
     },
     {
-      title: "Digital Minimalism",
-      status: social?.fields?.abstained ? "green" : social ? "red" : "yellow",
-      summary: `${digitalStreak}d streak`,
-      streak: digitalStreak,
-      items: social?.fields?.abstained ? ["Abstained"] : social ? ["Not abstained"] : [],
-    },
-    {
       title: "Sleep and readiness",
       status: combinedSleepStatus(sleep, selectedOura),
-      summary: "Subjective · Oura sleep · Readiness",
+      summary: [sleep?.fields?.quality ? `${sleep.fields.quality}/10` : "-", selectedOura?.dailySleep?.score ? `${selectedOura.dailySleep.score}` : "-", selectedOura?.dailyReadiness?.score ? `${selectedOura.dailyReadiness.score}` : "-"].join(" · "),
       noStreak: true,
       values: [
         { label: "Subjective sleep", value: sleep?.fields?.quality ? `${sleep.fields.quality}/10` : "-" },
@@ -1112,12 +1105,20 @@ function renderDashboard() {
         { label: "Readiness", value: selectedOura?.dailyReadiness?.score ? `${selectedOura.dailyReadiness.score}` : "-" },
       ],
       items: [],
+      order: 3,
+    },
+    {
+      title: "Digital Minimalism",
+      status: social?.fields?.abstained ? "green" : social ? "red" : "yellow",
+      summary: "",
+      streak: digitalStreak,
+      items: social?.fields?.abstained ? ["Abstained"] : social ? ["Not abstained"] : [],
     },
   ];
 
   document.querySelector("#dashboardGrid").innerHTML = `
     ${profileIsSparse() ? renderDashboardNotice() : ""}
-    <section class="scorecard-grid">${sortDashboardCards(cards).map(renderScorecard).join("")}</section>`;
+    <section class="scorecard-grid">${cards.map(renderScorecard).join("")}</section>`;
   ensureDietTargetForDate(selectedDashboardDate);
 }
 
@@ -1313,7 +1314,7 @@ function renderScorecard(card) {
       <span class="status-mark" aria-label="${escapeHtml(card.status === "green" ? "Complete" : card.status)}">${card.status === "green" ? "✓" : ""}</span>
       <span class="scorecard-title">
         <strong>${escapeHtml(card.title)}</strong>
-        <small>${escapeHtml(card.summary || "")}</small>
+        ${card.summary ? `<small>${escapeHtml(card.summary)}</small>` : ""}
       </span>
       ${card.noStreak ? "" : `<span class="streak-chip"><small>Streak</small><b>${escapeHtml(card.streak || 0)}d</b></span>`}
     </summary>
