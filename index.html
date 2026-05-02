@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Health Signals</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Primary">
+        <div class="brand">
+          <div class="brand-mark">HS</div>
+          <div>
+            <h1>Health Signals</h1>
+            <p>Log first. Insight second.</p>
+          </div>
+        </div>
+        <nav class="nav-tabs" aria-label="Views">
+          <button class="nav-tab is-active" data-view="log">Log</button>
+          <button class="nav-tab" data-view="records">Records</button>
+          <button class="nav-tab" data-view="chat">Chat</button>
+          <button class="nav-tab" data-view="insights">Insights</button>
+          <button class="nav-tab" data-view="settings">Settings</button>
+        </nav>
+        <div class="sidebar-card">
+          <span class="eyebrow">Today</span>
+          <strong id="todaySummary">0 entries</strong>
+          <p id="todayHint">Every saved entry is stored locally on this device.</p>
+        </div>
+        <div class="sidebar-card auth-card">
+          <span class="eyebrow">Account</span>
+          <div id="authStatus">Not connected</div>
+          <form id="authForm" class="auth-form">
+            <input type="email" name="email" placeholder="Email" autocomplete="email" required />
+            <input type="password" name="password" placeholder="Password" autocomplete="current-password" required />
+            <div class="button-row">
+              <button type="submit" data-auth-action="signin">Log in</button>
+              <button class="secondary-button" type="submit" data-auth-action="signup">Sign up</button>
+            </div>
+          </form>
+          <button id="logoutButton" class="secondary-button is-hidden" type="button">Log out</button>
+        </div>
+      </aside>
+
+      <main>
+        <section class="view is-visible" id="logView">
+          <header class="page-header">
+            <div>
+              <p class="eyebrow" id="currentDateLabel">Today</p>
+              <h2>Quick health log</h2>
+            </div>
+          </header>
+
+          <div class="log-grid">
+            <form class="log-card" id="exerciseForm" data-type="exercise">
+              <div class="section-title">
+                <h3>Exercise</h3>
+                <span>Free text</span>
+              </div>
+              <label>What did you do?
+                <textarea name="text" placeholder="45 min upper body lift, RPE 7, felt strong..." required></textarea>
+              </label>
+              <button type="submit">Save exercise</button>
+              <div class="extract-preview" data-preview="exercise">Structured extraction appears after saving.</div>
+            </form>
+
+            <form class="log-card" id="mealForm" data-type="meal">
+              <div class="section-title">
+                <h3>Meal</h3>
+                <span>Free text only</span>
+              </div>
+              <label>What did you eat?
+                <textarea name="text" placeholder="Dinner 8:15pm: chicken bowl with rice, avocado, salsa..." required></textarea>
+              </label>
+              <button type="submit">Save meal</button>
+              <div class="extract-preview" data-preview="meal">Structured extraction appears after saving.</div>
+              <div class="meal-suggestion" id="mealSuggestionPanel">
+                <strong>Next meal suggestion</strong>
+                <p>Log a meal to get timing and macro guidance.</p>
+              </div>
+            </form>
+
+            <form class="log-card" id="sleepForm" data-type="sleep">
+              <div class="section-title">
+                <h3>Sleep</h3>
+                <span>Subjective score</span>
+              </div>
+              <label>Sleep quality score
+                <input type="number" name="quality" min="1" max="10" placeholder="1-10" required />
+              </label>
+              <details class="nested-control">
+                <summary>Supplement stack</summary>
+                <label>Current pills or supplements
+                  <input name="pills" id="sleepPillsInput" placeholder="Auto-filled from previous sleep log" />
+                </label>
+              </details>
+              <button type="submit">Save sleep</button>
+              <div class="extract-preview" data-preview="sleep">Oura metrics can be added by sync later.</div>
+            </form>
+
+            <form class="log-card" id="meditationForm" data-type="meditation">
+              <div class="section-title">
+                <h3>Meditation</h3>
+                <span>Minutes and time</span>
+              </div>
+              <div class="two-col">
+                <label>Minutes
+                  <input type="number" name="minutes" min="1" required />
+                </label>
+                <label>Time
+                  <input type="time" name="time" required />
+                </label>
+              </div>
+              <button type="submit">Save meditation</button>
+              <div class="extract-preview" data-preview="meditation">Structured extraction appears after saving.</div>
+            </form>
+
+            <form class="log-card" id="socialForm" data-type="social">
+              <div class="section-title">
+                <h3>Social media</h3>
+                <span>Daily abstinence</span>
+              </div>
+              <label class="check-row">
+                <input type="checkbox" name="abstained" value="yes" />
+                <span>Abstained all day</span>
+              </label>
+              <label>Notes
+                <textarea name="notes" placeholder="What happened, urges, exceptions, or context..."></textarea>
+              </label>
+              <div class="definition-note" id="socialDefinitionPreview"></div>
+              <button type="submit">Save social media</button>
+              <div class="extract-preview" data-preview="social">Structured extraction appears after saving.</div>
+            </form>
+          </div>
+        </section>
+
+        <section class="view" id="chatView">
+          <header class="page-header">
+            <div>
+              <p class="eyebrow">Context-aware</p>
+              <h2>Ask your health data</h2>
+            </div>
+          </header>
+
+          <section class="chat-panel">
+            <div class="chat-messages" id="chatMessages">
+              <article class="chat-message assistant">
+                <p>Ask about training, meals, sleep, meditation, social media, or how your recent logs relate to your profile and goals.</p>
+              </article>
+            </div>
+            <form id="chatForm" class="chat-form">
+              <label>Question
+                <textarea name="question" placeholder="What should I pay attention to today based on my recent logs?" required></textarea>
+              </label>
+              <button type="submit">Ask</button>
+            </form>
+          </section>
+        </section>
+
+        <section class="view" id="recordsView">
+          <header class="page-header">
+            <div>
+              <p class="eyebrow">Saved data</p>
+              <h2>Everything you have logged</h2>
+            </div>
+            <div class="button-row">
+              <button id="exportButton" class="secondary-button" type="button">Export JSON</button>
+              <label class="import-button">Import JSON<input id="importInput" type="file" accept="application/json" /></label>
+            </div>
+          </header>
+
+          <div class="table-tabs" role="group" aria-label="Record filters">
+            <button class="table-tab is-active" data-filter="all">All</button>
+            <button class="table-tab" data-filter="exercise">Exercise</button>
+            <button class="table-tab" data-filter="meal">Meals</button>
+            <button class="table-tab" data-filter="sleep">Sleep</button>
+            <button class="table-tab" data-filter="meditation">Meditation</button>
+            <button class="table-tab" data-filter="social">Social</button>
+          </div>
+          <div id="recordsList" class="records-list"></div>
+        </section>
+
+        <section class="view" id="insightsView">
+          <header class="page-header">
+            <div>
+              <p class="eyebrow">Last 7 days</p>
+              <h2>LLM insights</h2>
+            </div>
+            <button id="generateInsightsButton" type="button">Generate insights</button>
+          </header>
+
+          <div class="insights-layout">
+            <section class="recommendations" id="recommendations">
+              <article class="recommendation-card" data-tone="green">
+                <h4>Ready when you are</h4>
+                <p>Generate insights after you have a few logs from the last week.</p>
+              </article>
+            </section>
+            <section class="prompt-panel">
+              <div class="section-title">
+                <h3>Last 7 days payload</h3>
+                <span id="insightStatus">Not generated yet</span>
+              </div>
+              <textarea id="llmPayload" readonly></textarea>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="settingsView">
+          <header class="page-header">
+            <div>
+              <p class="eyebrow">Deploy</p>
+              <h2>Phone-ready settings</h2>
+            </div>
+          </header>
+
+          <section class="settings-band">
+            <div>
+              <h3>Oura connection</h3>
+              <p>Oura sync belongs on the server so tokens are not exposed in the browser.</p>
+            </div>
+            <form id="ouraForm" class="settings-form">
+              <label>Token label <input name="tokenLabel" placeholder="Personal Oura token" /></label>
+              <label>Last sync <input type="date" name="lastSync" /></label>
+              <button type="submit">Save</button>
+            </form>
+          </section>
+
+          <section class="settings-band">
+            <div>
+              <h3>Nutrition profile</h3>
+              <p>Used for meal timing and macro suggestions.</p>
+            </div>
+            <form id="profileForm" class="settings-form profile-form">
+              <label>Age <input type="number" name="age" min="1" max="120" /></label>
+              <label>Sex <input name="sex" placeholder="Optional" /></label>
+              <label>Height <input name="height" placeholder="5'10&quot; or 178 cm" /></label>
+              <label>Weight <input name="weight" placeholder="175 lb or 79 kg" /></label>
+              <label>Body fat % <input type="number" name="bodyFat" min="1" max="80" step="0.1" /></label>
+              <label>Activity level <input name="activityLevel" placeholder="Sedentary, active, athlete..." /></label>
+              <label>Primary goal <input name="goal" placeholder="Fat loss, lean bulk, maintenance..." /></label>
+              <label>Diet preferences <input name="dietPreferences" placeholder="Vegetarian, high protein, no dairy..." /></label>
+              <label class="profile-notes">Notes
+                <textarea name="profileNotes" placeholder="Meal schedule, allergies, target calories/macros, training priorities..."></textarea>
+              </label>
+              <button type="submit">Save profile</button>
+            </form>
+          </section>
+
+          <section class="settings-band">
+            <div>
+              <h3>Storage note</h3>
+              <p>Logs save locally first, then sync to Supabase when you are logged in.</p>
+            </div>
+          </section>
+
+          <section class="settings-band">
+            <div>
+              <h3>Supabase</h3>
+              <p>Use your project URL and publishable anon key. Row-level security keeps each user scoped to their own logs.</p>
+            </div>
+            <form id="supabaseForm" class="settings-form">
+              <label>Project URL <input name="supabaseUrl" placeholder="https://your-project.supabase.co" /></label>
+              <label>Anon key <input name="supabaseAnonKey" placeholder="sb_publishable_..." /></label>
+              <button type="submit">Save</button>
+            </form>
+          </section>
+
+          <section class="settings-band">
+            <div>
+              <h3>Social media definition</h3>
+              <p>This definition is saved with each social media log.</p>
+            </div>
+            <form id="socialDefinitionForm" class="settings-form settings-form-wide">
+              <label>Abstained means
+                <textarea name="socialDefinition" id="socialDefinitionInput"></textarea>
+              </label>
+              <button type="submit">Save</button>
+            </form>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

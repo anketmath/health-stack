@@ -1,0 +1,977 @@
+const STORAGE_KEY = "health-signals-v2";
+const LEGACY_KEY = "health-signals-v1";
+const DEFAULT_SOCIAL_DEFINITION = "No X, YT, FB, IG, TikTok, News sites (1 YT podcast or 1 article OK)";
+
+const initialState = {
+  entries: [],
+  chat: [],
+  oura: { tokenLabel: "", lastSync: "" },
+  settings: { socialDefinition: DEFAULT_SOCIAL_DEFINITION },
+  profile: {
+    age: "",
+    sex: "",
+    height: "",
+    weight: "",
+    bodyFat: "",
+    activityLevel: "",
+    goal: "",
+    dietPreferences: "",
+    profileNotes: "",
+  },
+  cloud: { supabaseUrl: "", supabaseAnonKey: "" },
+};
+
+let state = loadState();
+let activeFilter = "all";
+let supabaseClient = null;
+let authUser = null;
+let authSubscription = null;
+let supabaseCacheKey = "";
+
+const views = {
+  log: document.querySelector("#logView"),
+  records: document.querySelector("#recordsView"),
+  chat: document.querySelector("#chatView"),
+  insights: document.querySelector("#insightsView"),
+  settings: document.querySelector("#settingsView"),
+};
+
+function loadState() {
+  const current = readJson(STORAGE_KEY);
+  if (current?.entries) return normalizeState(current);
+
+  const legacy = readJson(LEGACY_KEY);
+  if (legacy) {
+    const migrated = migrateLegacyState(legacy);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+    return migrated;
+  }
+
+  return JSON.parse(JSON.stringify(initialState));
+}
+
+function readJson(key) {
+  try {
+    return JSON.parse(localStorage.getItem(key));
+  } catch {
+    return null;
+  }
+}
+
+function migrateLegacyState(legacy) {
+  const entries = [];
+  ["exercise", "diet", "sleep", "meditation"].forEach((kind) => {
+    (legacy[kind] || []).forEach((item) => {
+      const type = kind === "diet" ? "meal" : kind;
+      entries.push({
+        id: item.id || createId(),
+        type,
+        date: item.date || today(),
+        createdAt: item.createdAt || new Date().toISOString(),
+        rawText: legacyText(type, item),
+        fields: normalizeFields(type, item),
+        extraction: item,
+      });
+    });
+  });
+  return normalizeState({ entries, oura: legacy.oura || initialState.oura });
+}
+
+function normalizeState(saved) {
+  return {
+    ...initialState,
+    ...saved,
+    chat: Array.isArray(saved.chat) ? saved.chat : [],
+    oura: { ...initialState.oura, ...(saved.oura || {}) },
+    settings: { ...initialState.settings, ...(saved.settings || {}) },
+    profile: { ...initialState.profile, ...(saved.profile || {}) },
+    cloud: { ...initialState.cloud, ...(saved.cloud || {}) },
+  };
+}
+
+function legacyText(type, item) {
+  if (type === "exercise") return [item.activity, item.minutes && `${item.minutes} min`, item.intensity && `intensity ${item.intensity}`, item.notes].filter(Boolean).join(", ");
+  if (type === "meal") return [item.meal, item.time, item.foods].filter(Boolean).join(": ");
+  if (type === "sleep") return [`Sleep quality ${item.quality}/10`, item.pills && `pills: ${item.pills}`, item.notes].filter(Boolean).join(", ");
+  if (type === "social") return [item.abstained ? "Abstained from social media" : "Did not abstain from social media", item.notes].filter(Boolean).join(", ");
+  return [item.minutes && `${item.minutes} min`, item.time, item.style, item.notes].filter(Boolean).join(", ");
+}
+
+function normalizeFields(type, item) {
+  if (type === "exercise") return { minutes: Number(item.minutes) || null, intensity: Number(item.intensity) || null };
+  if (type === "meal") return { time: item.time || null, protein: Number(item.protein) || null };
+  if (type === "sleep") return { quality: Number(item.quality) || null, pills: item.pills || "" };
+  if (type === "meditation") return { minutes: Number(item.minutes) || null, time: item.time || null };
+  if (type === "social") return { abstained: Boolean(item.abstained), definition: item.definition || DEFAULT_SOCIAL_DEFINITION };
+  return {};
+}
+
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function today() {
+  const date = new Date();
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 10);
+}
+
+function nowTime() {
+  return new Date().toTimeString().slice(0, 5);
+}
+
+function createId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function showToast(message) {
+  const toast = document.querySelector("#toast");
+  toast.textContent = message;
+  toast.classList.add("is-visible");
+  window.setTimeout(() => toast.classList.remove("is-visible"), 2200);
+}
+
+function setupNavigation() {
+  document.querySelectorAll(".nav-tab").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll(".nav-tab").forEach((tab) => tab.classList.toggle("is-active", tab === button));
+      Object.entries(views).forEach(([key, view]) => view.classList.toggle("is-visible", key === button.dataset.view));
+      render();
+    });
+  });
+
+  document.querySelectorAll(".table-tab").forEach((button) => {
+    button.addEventListener("click", () => {
+      activeFilter = button.dataset.filter;
+      document.querySelectorAll(".table-tab").forEach((tab) => tab.classList.toggle("is-active", tab === button));
+      renderRecords();
+    });
+  });
+}
+
+function setupForms() {
+  document.querySelectorAll(".log-card").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const entry = createEntry(form);
+      state.entries.push(entry);
+      saveState();
+      render();
+      form.reset();
+      prepareDefaults();
+      showToast(`${labelFor(entry.type)} saved`);
+      syncEntryToCloud(entry);
+      const extractedEntry = await extractEntry(entry);
+      if (extractedEntry.type === "meal") generateMealSuggestion(extractedEntry.id);
+    });
+  });
+
+  document.querySelector("#ouraForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    state.oura = Object.fromEntries(new FormData(event.currentTarget).entries());
+    saveState();
+    showToast("Oura settings saved");
+  });
+
+  document.querySelector("#socialDefinitionForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const formData = Object.fromEntries(new FormData(event.currentTarget).entries());
+    state.settings.socialDefinition = formData.socialDefinition.trim() || DEFAULT_SOCIAL_DEFINITION;
+    saveState();
+    prepareDefaults();
+    render();
+    syncProfileToCloud();
+    showToast("Social definition saved");
+  });
+
+  document.querySelector("#profileForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    state.profile = Object.fromEntries(new FormData(event.currentTarget).entries());
+    saveState();
+    render();
+    syncProfileToCloud();
+    showToast("Profile saved");
+  });
+
+  document.querySelector("#supabaseForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formData = Object.fromEntries(new FormData(event.currentTarget).entries());
+    state.cloud.supabaseUrl = formData.supabaseUrl.trim();
+    state.cloud.supabaseAnonKey = formData.supabaseAnonKey.trim();
+    saveState();
+    await initializeSupabase();
+    render();
+    showToast("Supabase settings saved");
+  });
+
+  document.querySelector("#authForm").addEventListener("submit", handleAuthSubmit);
+  document.querySelector("#logoutButton").addEventListener("click", signOut);
+}
+
+function createEntry(form) {
+  const type = form.dataset.type;
+  const formData = Object.fromEntries(new FormData(form).entries());
+  const entry = {
+    id: createId(),
+    type,
+    date: today(),
+    createdAt: new Date().toISOString(),
+    rawText: rawTextFor(type, formData),
+    fields: fieldsFor(type, formData),
+    extractionStatus: "pending",
+    extraction: null,
+  };
+  entry.extraction = heuristicExtraction(entry);
+  return entry;
+}
+
+function rawTextFor(type, data) {
+  if (type === "sleep") {
+    const pills = data.pills?.trim() ? ` Pills or supplements: ${data.pills.trim()}.` : "";
+    return `Subjective sleep quality ${data.quality}/10.${pills}`;
+  }
+  if (type === "meditation") return `${data.minutes} minutes at ${data.time}.`;
+  if (type === "social") {
+    const status = data.abstained === "yes" ? "Abstained from social media all day." : "Did not abstain from social media all day.";
+    const notes = data.notes?.trim() ? ` Notes: ${data.notes.trim()}` : "";
+    return `${status} Definition: ${state.settings.socialDefinition}.${notes}`;
+  }
+  return data.text.trim();
+}
+
+function fieldsFor(type, data) {
+  if (type === "sleep") return { quality: Number(data.quality), pills: data.pills?.trim() || "" };
+  if (type === "meditation") return { minutes: Number(data.minutes), time: data.time };
+  if (type === "social") return { abstained: data.abstained === "yes", definition: state.settings.socialDefinition, notes: data.notes?.trim() || "" };
+  return {};
+}
+
+async function extractEntry(entry) {
+  updatePreview(entry.type, "Extracting structured data...");
+  try {
+    const response = await fetch("/api/extract", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entry }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const data = await response.json();
+    return applyExtraction(entry.id, data.extraction, "complete");
+  } catch {
+    return applyExtraction(entry.id, heuristicExtraction(entry), "local");
+  }
+}
+
+function applyExtraction(id, extraction, status) {
+  const entry = state.entries.find((item) => item.id === id);
+  if (!entry) return;
+  entry.extraction = extraction;
+  entry.extractionStatus = status;
+  saveState();
+  updatePreview(entry.type, formatExtraction(extraction, status));
+  render();
+  syncEntryToCloud(entry);
+  return entry;
+}
+
+function heuristicExtraction(entry) {
+  const text = entry.rawText;
+  if (entry.type === "sleep") {
+    return { type: "sleep", quality: entry.fields.quality, pills: entry.fields.pills || null };
+  }
+  if (entry.type === "meditation") {
+    return { type: "meditation", minutes: entry.fields.minutes, time: entry.fields.time };
+  }
+  if (entry.type === "social") {
+    return {
+      type: "social",
+      abstained: entry.fields.abstained,
+      definition: entry.fields.definition,
+      notes: entry.fields.notes || null,
+    };
+  }
+  const minutes = text.match(/(\d+)\s*(min|minute|minutes|hr|hour|hours)/i);
+  const clock = text.match(/\b([01]?\d|2[0-3]):[0-5]\d\s*(am|pm)?\b/i) || text.match(/\b([1-9]|1[0-2])\s*(am|pm)\b/i);
+  return {
+    type: entry.type,
+    possibleMinutes: minutes ? minutes[0] : null,
+    possibleTime: clock ? clock[0] : null,
+    summary: text.slice(0, 180),
+  };
+}
+
+function formatExtraction(extraction, status) {
+  const source = status === "complete" ? "LLM" : status === "local" ? "Local fallback" : "Pending";
+  return `${source}: ${JSON.stringify(extraction, null, 2)}`;
+}
+
+function updatePreview(type, text) {
+  const preview = document.querySelector(`[data-preview="${type}"]`);
+  if (preview) preview.textContent = text;
+}
+
+function setupDataActions() {
+  document.querySelector("#recordsList").addEventListener("click", (event) => {
+    const button = event.target.closest(".delete-button");
+    if (!button) return;
+    if (!window.confirm("Delete this log from local storage and Supabase if synced?")) return;
+    state.entries = state.entries.filter((entry) => entry.id !== button.dataset.id);
+    saveState();
+    deleteEntryFromCloud(button.dataset.id);
+    render();
+    showToast("Entry deleted");
+  });
+
+  document.querySelector("#exportButton").addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `health-signals-${today()}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.querySelector("#importInput").addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const imported = JSON.parse(await file.text());
+      state = imported.entries ? normalizeState(imported) : migrateLegacyState(imported);
+      saveState();
+      render();
+      syncAllToCloud();
+      showToast("Data imported");
+    } catch {
+      showToast("Import failed");
+    } finally {
+      event.target.value = "";
+    }
+  });
+
+  document.querySelector("#generateInsightsButton").addEventListener("click", generateInsights);
+  document.querySelector("#chatForm").addEventListener("submit", handleChatSubmit);
+}
+
+async function handleChatSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const question = Object.fromEntries(new FormData(form).entries()).question.trim();
+  if (!question) return;
+
+  addChatMessage("user", question);
+  form.reset();
+  const pendingId = addChatMessage("assistant", "Thinking with your recent logs...");
+
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildChatPayload(question)),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const data = await response.json();
+    updateChatMessage(pendingId, data.answer || "I could not form an answer.");
+  } catch {
+    updateChatMessage(pendingId, localChatAnswer(question));
+  }
+}
+
+function buildChatPayload(question) {
+  return {
+    date: today(),
+    question,
+    profile: state.profile,
+    settings: state.settings,
+    recentEntries: entriesFromLastDays(14),
+    supplementContext: supplementContext(30),
+    chatHistory: state.chat.slice(-8),
+    instruction: "Answer using the user's profile, goals, settings, and recent health logs. Be practical and cautious, and clearly state uncertainty.",
+  };
+}
+
+function addChatMessage(role, text) {
+  const message = { id: createId(), role, text, createdAt: new Date().toISOString() };
+  state.chat.push(message);
+  state.chat = state.chat.slice(-30);
+  saveState();
+  renderChat();
+  return message.id;
+}
+
+function updateChatMessage(id, text) {
+  const message = state.chat.find((item) => item.id === id);
+  if (!message) return;
+  message.text = text;
+  saveState();
+  renderChat();
+}
+
+function localChatAnswer(question) {
+  const recent = entriesFromLastDays(14);
+  const byType = ["exercise", "meal", "sleep", "meditation", "social"].map((type) => `${labelFor(type)}: ${recent.filter((entry) => entry.type === type).length}`).join(", ");
+  const goal = state.profile.goal ? ` Your saved goal is: ${state.profile.goal}.` : "";
+  return `I can answer more specifically once the LLM endpoint is deployed. Locally, I can see the last 14 days include ${byType}.${goal}\n\nYour question was: "${question}"`;
+}
+
+async function generateMealSuggestion(entryId) {
+  const entry = state.entries.find((item) => item.id === entryId);
+  if (!entry) return;
+  const panel = document.querySelector("#mealSuggestionPanel");
+  panel.innerHTML = `<strong>Next meal suggestion</strong><p>Generating...</p>`;
+
+  const payload = buildMealSuggestionPayload(entry);
+  try {
+    const response = await fetch("/api/meal-suggestion", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const data = await response.json();
+    entry.mealSuggestion = data.suggestion;
+    saveState();
+    syncEntryToCloud(entry);
+    renderMealSuggestion(data.suggestion, "Generated by LLM");
+  } catch {
+    const suggestion = localMealSuggestion(payload);
+    entry.mealSuggestion = suggestion;
+    saveState();
+    syncEntryToCloud(entry);
+    renderMealSuggestion(suggestion, "Local fallback");
+  }
+}
+
+function buildMealSuggestionPayload(mealEntry) {
+  const todayEntries = state.entries.filter((entry) => entry.date === today()).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return {
+    date: today(),
+    profile: state.profile,
+    latestMeal: mealEntry,
+    today: {
+      meals: todayEntries.filter((entry) => entry.type === "meal"),
+      exercise: todayEntries.filter((entry) => entry.type === "exercise"),
+      sleep: todayEntries.filter((entry) => entry.type === "sleep"),
+      meditation: todayEntries.filter((entry) => entry.type === "meditation"),
+    },
+    instruction: "Suggest when to eat the next meal and rough protein, carbs, and fats based on profile/goals, today's meals, and today's exercise. Keep it practical and avoid medical claims.",
+  };
+}
+
+function renderMealSuggestion(suggestion, status) {
+  const panel = document.querySelector("#mealSuggestionPanel");
+  panel.innerHTML = `<strong>Next meal suggestion · ${escapeHtml(status)}</strong>
+    <p>${escapeHtml(suggestion.nextMealTiming || "Timing: use hunger, schedule, and training context.")}</p>
+    <p>${escapeHtml(suggestion.macros || "Macros: include protein, carbs, and fats in a balanced meal.")}</p>
+    <p>${escapeHtml(suggestion.reasoning || "")}</p>`;
+}
+
+function localMealSuggestion(payload) {
+  const exerciseText = payload.today.exercise.map((entry) => `${entry.rawText} ${JSON.stringify(entry.extraction || {})}`).join(" ");
+  const hardTraining = /intensity\s*[78-9]|rpe\s*[78-9]|run|lift|strength|interval|hard/i.test(exerciseText);
+  const goal = `${payload.profile.goal || ""} ${payload.profile.profileNotes || ""}`.toLowerCase();
+  const protein = goal.includes("bulk") || hardTraining ? "35-50g protein" : "25-40g protein";
+  const carbs = hardTraining ? "50-90g carbs" : goal.includes("fat loss") || goal.includes("cut") ? "25-50g carbs" : "35-70g carbs";
+  const fats = goal.includes("fat loss") || goal.includes("cut") ? "10-20g fats" : "15-30g fats";
+  return {
+    nextMealTiming: hardTraining ? "Eat the next meal within 1-2 hours if you trained hard today; otherwise aim for your normal 3-5 hour gap." : "Aim for the next meal in about 3-5 hours, adjusted for hunger and schedule.",
+    macros: `Rough target: ${protein}, ${carbs}, ${fats}.`,
+    reasoning: "Local estimate based on your logged meal, today's exercise text, and saved goal. The LLM version will use richer extraction when deployed.",
+  };
+}
+
+async function generateInsights() {
+  const recentEntries = entriesFromLastDays(7);
+  document.querySelector("#insightStatus").textContent = "Generating...";
+  document.querySelector("#llmPayload").value = JSON.stringify(buildInsightPayload(recentEntries), null, 2);
+
+  try {
+    const response = await fetch("/api/insights", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entries: recentEntries, date: today(), profile: state.profile, supplementContext: supplementContext(30) }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const data = await response.json();
+    renderInsightText(data.insights, "Generated by LLM");
+  } catch {
+    renderInsightText(localInsights(recentEntries), "Local fallback");
+  }
+}
+
+function buildInsightPayload(entries) {
+  return {
+    date: today(),
+    range: "last 7 days",
+    entries,
+    profile: state.profile,
+    supplementContext: supplementContext(30),
+    instruction: "Find useful patterns across exercise, meals, subjective sleep quality, pills/supplements, meditation, social media abstinence, and available extracted fields.",
+  };
+}
+
+function renderInsightText(insights, status) {
+  document.querySelector("#insightStatus").textContent = status;
+  const items = Array.isArray(insights) ? insights : [{ title: "Insight", detail: String(insights) }];
+  document.querySelector("#recommendations").innerHTML = items
+    .map(
+      (item) => `<article class="recommendation-card" data-tone="${escapeHtml(item.tone || "green")}">
+        <h4>${escapeHtml(item.title || "Insight")}</h4>
+        <p>${escapeHtml(item.detail || item.body || "")}</p>
+      </article>`,
+    )
+    .join("");
+}
+
+function localInsights(entries) {
+  if (!entries.length) {
+    return [{ tone: "gold", title: "No recent logs", detail: "There are no saved entries in the last 7 days yet." }];
+  }
+
+  const sleep = entries.filter((entry) => entry.type === "sleep");
+  const meals = entries.filter((entry) => entry.type === "meal");
+  const exercise = entries.filter((entry) => entry.type === "exercise");
+  const meditation = entries.filter((entry) => entry.type === "meditation");
+  const social = entries.filter((entry) => entry.type === "social");
+  const avgSleep = average(sleep.map((entry) => entry.fields?.quality));
+  const abstainedDays = social.filter((entry) => entry.fields?.abstained).length;
+  const supplementChanges = supplementContext(30).changes.length;
+
+  return [
+    {
+      tone: "green",
+      title: "Logging coverage",
+      detail: `Last 7 days: ${exercise.length} exercise, ${meals.length} meal, ${sleep.length} sleep, ${meditation.length} meditation, and ${social.length} social media entries.`,
+    },
+    {
+      tone: avgSleep && avgSleep < 6.5 ? "rose" : "blue",
+      title: "Sleep baseline",
+      detail: avgSleep ? `Your average subjective sleep score is ${formatNumber(avgSleep)}/10. The LLM endpoint can compare this against meals, exercise, pills, and meditation once configured.` : "Add sleep scores to make correlations possible.",
+    },
+    {
+      tone: "gold",
+      title: "Next useful variable",
+      detail: "For meals and exercise, include timing in the free text when you can. The extractor will turn that into structure for better insights.",
+    },
+    {
+      tone: social.length && abstainedDays === social.length ? "green" : "blue",
+      title: "Social media signal",
+      detail: social.length ? `You abstained on ${abstainedDays} of ${social.length} logged social media days. Compare those days against sleep quality and meditation consistency.` : "Add social media abstinence logs to compare against sleep and focus.",
+    },
+    {
+      tone: supplementChanges ? "gold" : "green",
+      title: "Supplement stack",
+      detail: supplementChanges ? `${supplementChanges} supplement stack change${supplementChanges === 1 ? "" : "s"} detected in the last 30 days. Sleep insights should compare nights before and after those changes.` : "No recent supplement stack changes detected in logged sleep entries.",
+    },
+  ];
+}
+
+function supplementContext(days = 30) {
+  const sleepEntries = entriesFromLastDays(days)
+    .filter((entry) => entry.type === "sleep")
+    .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt));
+  const timeline = sleepEntries.map((entry) => ({
+    date: entry.date,
+    sleepQuality: entry.fields?.quality ?? entry.extraction?.quality ?? entry.extraction?.sleepQuality ?? null,
+    pills: normalizeStack(entry.fields?.pills || entry.extraction?.pills || entry.extraction?.supplements?.join(", ") || ""),
+  }));
+  const changes = [];
+  let previous = null;
+  timeline.forEach((item) => {
+    if (previous !== null && item.pills !== previous) {
+      changes.push({
+        date: item.date,
+        from: previous || "none logged",
+        to: item.pills || "none logged",
+        sleepQuality: item.sleepQuality,
+      });
+    }
+    previous = item.pills;
+  });
+  return {
+    currentStack: timeline.at(-1)?.pills || "",
+    timeline,
+    changes,
+  };
+}
+
+function normalizeStack(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function entriesFromLastDays(days) {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - days + 1);
+  return state.entries.filter((entry) => new Date(`${entry.date}T00:00:00`) >= start).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+function renderRecords() {
+  const entries = state.entries
+    .filter((entry) => activeFilter === "all" || entry.type === activeFilter)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  if (!entries.length) {
+    const emptyLabel = activeFilter === "all" ? "records" : `${labelFor(activeFilter).toLowerCase()} records`;
+    document.querySelector("#recordsList").innerHTML = `<article class="record-card"><h3>No ${escapeHtml(emptyLabel)} yet</h3><p>Saved logs will appear here immediately.</p></article>`;
+    return;
+  }
+
+  document.querySelector("#recordsList").innerHTML = entries
+    .map(
+      (entry) => `<article class="record-card">
+        <div class="record-header">
+          <div>
+            <span class="record-type">${escapeHtml(labelFor(entry.type))}</span>
+            <h3>${escapeHtml(entry.date)} · ${escapeHtml(timeLabel(entry.createdAt))}</h3>
+          </div>
+          <button class="delete-button" data-id="${escapeHtml(entry.id)}" type="button">Delete</button>
+        </div>
+        <p class="raw-log">${escapeHtml(entry.rawText)}</p>
+        <details>
+          <summary>Structured data</summary>
+          <pre>${escapeHtml(JSON.stringify(entry.extraction || entry.fields || {}, null, 2))}</pre>
+        </details>
+        ${
+          entry.mealSuggestion
+            ? `<details>
+                <summary>Meal suggestion</summary>
+                <pre>${escapeHtml(JSON.stringify(entry.mealSuggestion, null, 2))}</pre>
+              </details>`
+            : ""
+        }
+      </article>`,
+    )
+    .join("");
+}
+
+function renderTodaySummary() {
+  const count = state.entries.filter((entry) => entry.date === today()).length;
+  document.querySelector("#todaySummary").textContent = `${count} ${count === 1 ? "entry" : "entries"}`;
+  document.querySelector("#todayHint").textContent = `${state.entries.length} total saved ${state.entries.length === 1 ? "record" : "records"}.`;
+}
+
+function renderPayload() {
+  document.querySelector("#llmPayload").value = JSON.stringify(buildInsightPayload(entriesFromLastDays(7)), null, 2);
+}
+
+function renderChat() {
+  const container = document.querySelector("#chatMessages");
+  const messages = state.chat.length ? state.chat : [{ role: "assistant", text: "Ask about training, meals, sleep, meditation, social media, or how your recent logs relate to your profile and goals." }];
+  container.innerHTML = messages
+    .map(
+      (message) => `<article class="chat-message ${escapeHtml(message.role)}">
+        <p>${escapeHtml(message.text)}</p>
+      </article>`,
+    )
+    .join("");
+  container.scrollTop = container.scrollHeight;
+}
+
+function renderSettings() {
+  const form = document.querySelector("#ouraForm");
+  form.tokenLabel.value = state.oura.tokenLabel || "";
+  form.lastSync.value = state.oura.lastSync || "";
+  const supabaseForm = document.querySelector("#supabaseForm");
+  supabaseForm.supabaseUrl.value = state.cloud.supabaseUrl || "";
+  supabaseForm.supabaseAnonKey.value = state.cloud.supabaseAnonKey || "";
+  const profileForm = document.querySelector("#profileForm");
+  Object.entries(state.profile).forEach(([key, value]) => {
+    if (profileForm.elements[key]) profileForm.elements[key].value = value || "";
+  });
+  document.querySelector("#socialDefinitionInput").value = state.settings.socialDefinition || DEFAULT_SOCIAL_DEFINITION;
+  document.querySelector("#socialDefinitionPreview").textContent = `Current definition: ${state.settings.socialDefinition || DEFAULT_SOCIAL_DEFINITION}`;
+}
+
+function render() {
+  renderTodaySummary();
+  renderRecords();
+  renderChat();
+  renderPayload();
+  renderSettings();
+  renderAuth();
+}
+
+function prepareDefaults() {
+  document.querySelector("#currentDateLabel").textContent = new Date().toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  });
+  document.querySelector('#meditationForm input[name="time"]').value = nowTime();
+  const previousSleep = [...state.entries].reverse().find((entry) => entry.type === "sleep" && entry.fields?.pills);
+  document.querySelector("#sleepPillsInput").value = previousSleep?.fields?.pills || "";
+}
+
+function labelFor(type) {
+  return { exercise: "Exercise", meal: "Meal", sleep: "Sleep", meditation: "Meditation", social: "Social media" }[type] || type;
+}
+
+function timeLabel(iso) {
+  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+function average(values) {
+  const clean = values.map(Number).filter((value) => Number.isFinite(value));
+  if (!clean.length) return null;
+  return clean.reduce((total, value) => total + value, 0) / clean.length;
+}
+
+function formatNumber(value) {
+  return Number(value).toFixed(1).replace(/\.0$/, "");
+}
+
+function hasSupabaseConfig() {
+  return Boolean(state.cloud.supabaseUrl && state.cloud.supabaseAnonKey);
+}
+
+async function initializeSupabase() {
+  if (!hasSupabaseConfig()) {
+    renderAuth("Add Supabase settings to enable login.");
+    return;
+  }
+
+  if (!window.supabase?.createClient) {
+    renderAuth("Supabase client library did not load.");
+    return;
+  }
+
+  const cacheKey = `${state.cloud.supabaseUrl}|${state.cloud.supabaseAnonKey}`;
+  if (!supabaseClient || cacheKey !== supabaseCacheKey) {
+    authSubscription?.unsubscribe?.();
+    try {
+      supabaseClient = window.supabase.createClient(state.cloud.supabaseUrl, state.cloud.supabaseAnonKey, {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+        },
+      });
+    } catch (error) {
+      renderAuth(`Supabase config error: ${error.message}`);
+      return;
+    }
+    supabaseCacheKey = cacheKey;
+    const {
+      data: { subscription },
+    } = supabaseClient.auth.onAuthStateChange((_event, session) => {
+      authUser = session?.user || null;
+      renderAuth();
+      if (authUser) syncWithCloud();
+    });
+    authSubscription = subscription;
+  }
+
+  const {
+    data: { session },
+  } = await supabaseClient.auth.getSession();
+  authUser = session?.user || null;
+  renderAuth();
+  if (authUser) await syncWithCloud();
+}
+
+async function handleAuthSubmit(event) {
+  event.preventDefault();
+  if (!supabaseClient) {
+    showToast("Save Supabase settings first");
+    return;
+  }
+
+  const action = event.submitter?.dataset.authAction || "signin";
+  const formData = Object.fromEntries(new FormData(event.currentTarget).entries());
+  const credentials = { email: formData.email.trim(), password: formData.password };
+  const signupOptions = location.origin.startsWith("http") ? { options: { emailRedirectTo: location.origin } } : {};
+  const request = action === "signup" ? supabaseClient.auth.signUp({ ...credentials, ...signupOptions }) : supabaseClient.auth.signInWithPassword(credentials);
+  const { data, error } = await request;
+
+  if (error) {
+    showToast(error.message);
+    return;
+  }
+
+  authUser = data.session?.user || data.user || authUser;
+  event.currentTarget.reset();
+  renderAuth();
+  if (authUser) await syncWithCloud();
+  showToast(action === "signup" && !data.session ? "Check your email to confirm signup" : "Logged in");
+}
+
+async function signOut() {
+  if (!supabaseClient) return;
+  const { error } = await supabaseClient.auth.signOut();
+  if (error) {
+    showToast(error.message);
+    return;
+  }
+  authUser = null;
+  renderAuth();
+  showToast("Logged out");
+}
+
+function renderAuth(message = "") {
+  const status = document.querySelector("#authStatus");
+  const form = document.querySelector("#authForm");
+  const logoutButton = document.querySelector("#logoutButton");
+  if (!hasSupabaseConfig()) {
+    status.textContent = message || "Add Supabase settings first";
+    form.classList.remove("is-hidden");
+    logoutButton.classList.add("is-hidden");
+    return;
+  }
+
+  if (authUser) {
+    status.textContent = authUser.email || "Logged in";
+    form.classList.add("is-hidden");
+    logoutButton.classList.remove("is-hidden");
+  } else {
+    status.textContent = message || "Not logged in";
+    form.classList.remove("is-hidden");
+    logoutButton.classList.add("is-hidden");
+  }
+}
+
+async function syncWithCloud() {
+  if (!supabaseClient || !authUser) return;
+  try {
+    await loadProfileFromCloud();
+    const { data, error } = await supabaseClient.from("health_entries").select("*").order("created_at", { ascending: true });
+    if (error) throw error;
+    const cloudEntries = (data || []).map(fromCloudRow);
+    mergeCloudEntries(cloudEntries);
+    await syncAllToCloud();
+    showToast("Supabase synced");
+  } catch (error) {
+    showToast(`Sync failed: ${error.message}`);
+  }
+}
+
+function mergeCloudEntries(cloudEntries) {
+  const byId = new Map(state.entries.map((entry) => [entry.id, entry]));
+  cloudEntries.forEach((entry) => {
+    if (!byId.has(entry.id)) byId.set(entry.id, entry);
+  });
+  state.entries = Array.from(byId.values()).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  saveState();
+  render();
+}
+
+async function syncAllToCloud() {
+  if (!supabaseClient || !authUser || !state.entries.length) return;
+  const { error } = await supabaseClient.from("health_entries").upsert(state.entries.map(toCloudRow), { onConflict: "id" });
+  if (error) showToast(`Cloud save failed: ${error.message}`);
+}
+
+async function syncEntryToCloud(entry) {
+  if (!supabaseClient || !authUser) return;
+  const { error } = await supabaseClient.from("health_entries").upsert(toCloudRow(entry), { onConflict: "id" });
+  if (error) showToast(`Cloud save failed: ${error.message}`);
+}
+
+async function deleteEntryFromCloud(id) {
+  if (!supabaseClient || !authUser) return;
+  const { error } = await supabaseClient.from("health_entries").delete().eq("id", id);
+  if (error) showToast(`Cloud delete failed: ${error.message}`);
+}
+
+function toCloudRow(entry) {
+  return {
+    id: entry.id,
+    user_id: authUser.id,
+    type: entry.type,
+    entry_date: entry.date,
+    created_at: entry.createdAt,
+    raw_text: entry.rawText,
+    fields: entry.fields || {},
+    extraction: entry.extraction || null,
+    extraction_status: entry.extractionStatus || null,
+    meal_suggestion: entry.mealSuggestion || null,
+  };
+}
+
+function fromCloudRow(row) {
+  return {
+    id: row.id,
+    type: row.type,
+    date: row.entry_date,
+    createdAt: row.created_at,
+    rawText: row.raw_text,
+    fields: row.fields || {},
+    extraction: row.extraction || null,
+    extractionStatus: row.extraction_status || null,
+    mealSuggestion: row.meal_suggestion || null,
+  };
+}
+
+async function syncProfileToCloud() {
+  if (!supabaseClient || !authUser) return;
+  const { error } = await supabaseClient
+    .from("health_profiles")
+    .upsert(
+      {
+        user_id: authUser.id,
+        profile: state.profile,
+        settings: state.settings,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+  if (error) showToast(`Profile cloud save failed: ${error.message}`);
+}
+
+async function loadProfileFromCloud() {
+  if (!supabaseClient || !authUser) return;
+  const { data, error } = await supabaseClient.from("health_profiles").select("*").eq("user_id", authUser.id).maybeSingle();
+  if (error) {
+    showToast(`Profile sync failed: ${error.message}`);
+    return;
+  }
+  if (data) {
+    state.profile = { ...initialState.profile, ...(data.profile || {}) };
+    state.settings = { ...state.settings, ...(data.settings || {}) };
+    saveState();
+    render();
+  } else {
+    await syncProfileToCloud();
+  }
+}
+
+async function loadRemoteConfig() {
+  if (hasSupabaseConfig()) return;
+  try {
+    const response = await fetch("/api/config");
+    if (!response.ok) return;
+    const config = await response.json();
+    if (config.supabaseUrl && config.supabaseAnonKey) {
+      state.cloud.supabaseUrl = config.supabaseUrl;
+      state.cloud.supabaseAnonKey = config.supabaseAnonKey;
+      saveState();
+    }
+  } catch {
+    // file:// and offline usage land here; manual Settings config remains available.
+  }
+}
+
+async function bootstrapCloud() {
+  await loadRemoteConfig();
+  render();
+  await initializeSupabase();
+}
+
+setupNavigation();
+setupForms();
+setupDataActions();
+prepareDefaults();
+render();
+bootstrapCloud();
