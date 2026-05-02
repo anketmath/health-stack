@@ -853,7 +853,16 @@ function estimateMealFromText(text) {
 }
 
 function nutritionTotals(entries) {
+  const latestTotals = latestMealDayTotals(entries);
+  if (latestTotals) return latestTotals;
   return entries.reduce((total, entry) => addMacros(total, macrosForMeal(entry)), { calories: 0, protein: 0, carbs: 0, fat: 0 });
+}
+
+function latestMealDayTotals(entries) {
+  return [...entries]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((entry) => normalizeMacros(entry.mealSuggestion?.dayTotals) || normalizeMacros(entry.mealSuggestion?.dailyTotals) || normalizeMacros(entry.mealSuggestion?.totalForDay) || normalizeMacros(entry.extraction?.dayTotals))
+    .find(Boolean);
 }
 
 function macrosForMeal(entry) {
@@ -868,8 +877,10 @@ function macrosForMeal(entry) {
     normalizeMacros(extraction.nutrition) ||
     normalizeMacros(extraction.macros) ||
     normalizeMacros(extraction.currentMeal) ||
+    normalizeMacros(extraction) ||
     normalizeMacros(entry.fields?.nutrition) ||
     normalizeMacros(entry.fields?.macros) ||
+    normalizeMacros(entry.fields) ||
     {}
   );
 }
