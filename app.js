@@ -1060,59 +1060,66 @@ function renderDashboard() {
   const social = (byType.social || []).find((entry) => entry.fields?.abstained) || (byType.social || [])[0];
   const exerciseLogged = (byType.exercise || []).length > 0;
   const dietStatus = dietStatusFor(nutrition, meals, selectedDashboardDate);
-  const sleepStatus = sleepStatusFor(sleep, selectedOura);
-  const readinessStatus = readinessStatusFor(selectedOura);
+  const exerciseStreak = streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "exercise"));
+  const meditationStreak = streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "meditation"));
+  const digitalStreak = streakAsOf(selectedDashboardDate, (date) => hasSocialAbstainedOnDate(date));
 
   const inputs = [
     {
       title: "Exercise",
       status: exerciseLogged ? "green" : "red",
       metric: sessionMetric((byType.exercise || []).length),
-      streak: streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "exercise")),
+      streak: exerciseStreak,
+      showStreak: true,
       items: rawItems(byType.exercise),
     },
     {
       title: "Diet",
       status: dietStatus.status,
       metric: `${nutrition.calories || 0} cal · ${nutrition.protein || 0}g protein`,
-      streak: streakAsOf(selectedDashboardDate, (date) => dietStatusFor(nutritionTotals(state.entries.filter((entry) => entry.date === date && entry.type === "meal")), state.entries.filter((entry) => entry.date === date && entry.type === "meal"), date).status === "green"),
-      items: [`${nutrition.protein || 0}g protein`, `${nutrition.carbs || 0}g carbs`, `${nutrition.fat || 0}g fat`],
+      showStreak: false,
+      items: [],
     },
     {
       title: "Meditation",
       status: medMinutes > 0 ? "green" : "red",
       metric: `${medMinutes || 0} min`,
-      streak: streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "meditation")),
+      streak: meditationStreak,
+      showStreak: true,
       items: rawItems(byType.meditation),
     },
     {
       title: "Digital Minimalism",
       status: social?.fields?.abstained ? "green" : social ? "red" : "yellow",
       metric: social?.fields?.abstained ? "Abstained" : social ? "Used" : "Not set",
-      streak: streakAsOf(selectedDashboardDate, (date) => hasSocialAbstainedOnDate(date)),
+      streak: digitalStreak,
+      showStreak: true,
       items: social?.fields?.abstained ? ["Abstained"] : social ? ["Not abstained"] : [],
     },
   ];
 
   const outcomes = [
     {
-      title: "Sleep Quality",
-      status: sleepStatus.status,
-      metric: `${sleepStatus.metric} ${sleepStatus.metricLabel}`,
-      streak: streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "sleep")),
-      items: sleepItems(sleep, selectedOura),
-    },
-    {
-      title: "Readiness",
-      status: readinessStatus.status,
-      metric: `${readinessStatus.metric} ${readinessStatus.metricLabel}`,
-      streak: streakAsOf(selectedDashboardDate, (date) => Boolean(ouraRecordFor(date)?.dailyReadiness?.score)),
-      items: readinessStatus.items,
+      title: "Sleep and readiness",
+      status: combinedSleepStatus(sleep, selectedOura),
+      metric: "",
+      showStreak: false,
+      values: [
+        { label: "Subjective", value: sleep?.fields?.quality ? `${sleep.fields.quality}/10` : "-" },
+        { label: "Oura sleep", value: selectedOura?.dailySleep?.score ? `${selectedOura.dailySleep.score}` : "-" },
+        { label: "Readiness", value: selectedOura?.dailyReadiness?.score ? `${selectedOura.dailyReadiness.score}` : "-" },
+      ],
+      items: [],
     },
   ];
 
   document.querySelector("#dashboardGrid").innerHTML = `
     ${profileIsSparse() ? renderDashboardNotice() : ""}
+    ${renderMomentumSummary([
+      { title: "Exercise", status: exerciseLogged ? "green" : "red", streak: exerciseStreak },
+      { title: "Meditation", status: medMinutes > 0 ? "green" : "red", streak: meditationStreak },
+      { title: "Digital Minimalism", status: social?.fields?.abstained ? "green" : social ? "red" : "yellow", streak: digitalStreak },
+    ])}
     <section class="dashboard-section">
       <div class="dashboard-section-rule"></div>
       <div class="dashboard-card-row">${sortDashboardCards(inputs).map(renderDashboardCard).join("")}</div>
@@ -1229,48 +1236,34 @@ function isEarlyToday(date) {
   return date === today() && new Date().getHours() < 13;
 }
 
-function sleepStatusFor(sleep, oura) {
+function combinedSleepStatus(sleep, oura) {
   const subjective = Number(sleep?.fields?.quality);
-  if (Number.isFinite(subjective)) {
-    return {
-      status: subjective >= 7 ? "green" : subjective >= 5 ? "yellow" : "red",
-      label: subjective >= 7 ? "Rested" : subjective >= 5 ? "Mixed" : "Low",
-      metric: `${subjective}/10`,
-      metricLabel: "subjective",
-    };
-  }
-  const ouraScore = Number(oura?.dailySleep?.score);
-  if (Number.isFinite(ouraScore)) {
-    return {
-      status: ouraScore >= 80 ? "green" : ouraScore >= 65 ? "yellow" : "red",
-      label: ouraScore >= 80 ? "Strong" : ouraScore >= 65 ? "Mixed" : "Low",
-      metric: `${ouraScore}`,
-      metricLabel: "Oura",
-    };
-  }
-  return { status: "yellow", label: "Unset", metric: "-", metricLabel: "score" };
+  const ouraSleep = Number(oura?.dailySleep?.score);
+  const readiness = Number(oura?.dailyReadiness?.score);
+  const scores = [
+    Number.isFinite(subjective) ? subjective * 10 : null,
+    Number.isFinite(ouraSleep) ? ouraSleep : null,
+    Number.isFinite(readiness) ? readiness : null,
+  ].filter((score) => score !== null);
+  if (!scores.length) return "yellow";
+  const averageScore = average(scores);
+  if (averageScore >= 78) return "green";
+  if (averageScore >= 62) return "yellow";
+  return "red";
 }
 
-function readinessStatusFor(oura) {
-  const score = Number(oura?.dailyReadiness?.score);
-  if (!Number.isFinite(score)) return { status: "yellow", label: "Unset", metric: "-", metricLabel: "readiness", items: [] };
-  return {
-    status: score >= 80 ? "green" : score >= 65 ? "yellow" : "red",
-    label: score >= 80 ? "Ready" : score >= 65 ? "Steady" : "Recover",
-    metric: `${score}`,
-    metricLabel: "Oura",
-    items: [],
-  };
-}
-
-function sleepItems(sleep, oura) {
-  const items = [];
-  if (sleep) {
-    items.push(`Subjective ${sleep.fields?.quality || "-"} / 10`);
-    if (sleep.fields?.pills) items.push("Pre-bed supplement stack logged");
-  }
-  if (oura?.dailySleep) items.push(`Oura sleep score ${oura.dailySleep.score || "-"}`);
-  return items;
+function renderMomentumSummary(items) {
+  return `<section class="momentum-summary">
+    ${items
+      .map(
+        (item) => `<article class="momentum-pill" data-status="${escapeHtml(item.status)}">
+          <span class="status-mark" aria-label="${escapeHtml(item.status === "green" ? "Complete" : item.status)}">${item.status === "green" ? "✓" : ""}</span>
+          <strong>${escapeHtml(item.title)}</strong>
+          <span class="momentum-streak">${escapeHtml(item.streak || 0)}d streak</span>
+        </article>`,
+      )
+      .join("")}
+  </section>`;
 }
 
 function renderDashboardNotice() {
@@ -1284,12 +1277,18 @@ function renderDashboardCard(card) {
   return `<article class="dashboard-card" data-status="${escapeHtml(card.status)}">
     <div class="dashboard-card-top">
       <span class="status-mark" aria-label="${escapeHtml(card.status === "green" ? "Complete" : card.status)}">${card.status === "green" ? "✓" : ""}</span>
-      <span class="streak-chip"><small>Streak</small><b>${escapeHtml(card.streak || 0)}d</b></span>
+      ${card.showStreak ? `<span class="streak-chip"><small>Streak</small><b>${escapeHtml(card.streak || 0)}d</b></span>` : ""}
     </div>
     <h3>${escapeHtml(card.title)}</h3>
-    <div class="dashboard-metric">${escapeHtml(card.metric)}</div>
+    ${card.values ? renderDashboardValues(card.values) : `<div class="dashboard-metric">${escapeHtml(card.metric)}</div>`}
     ${(card.items || []).length ? `<ul class="dashboard-list">${card.items.slice(0, 3).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
   </article>`;
+}
+
+function renderDashboardValues(values) {
+  return `<div class="dashboard-values">
+    ${values.map((item) => `<div><strong>${escapeHtml(item.value)}</strong><span>${escapeHtml(item.label)}</span></div>`).join("")}
+  </div>`;
 }
 
 function renderRecords() {

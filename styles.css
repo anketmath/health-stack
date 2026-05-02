@@ -387,6 +387,49 @@ label,
   background: linear-gradient(90deg, transparent, var(--line), transparent);
 }
 
+.momentum-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.momentum-pill {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 5px solid #9aa39f;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.momentum-pill[data-status="green"] {
+  border-left-color: var(--green);
+}
+
+.momentum-pill[data-status="yellow"] {
+  border-left-color: var(--gold);
+}
+
+.momentum-pill[data-status="red"] {
+  border-left-color: var(--rose);
+}
+
+.momentum-pill strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.momentum-streak {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .dashboard-card-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -394,7 +437,7 @@ label,
 }
 
 .dashboard-card-row-outcomes {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .dashboard-card {
@@ -467,7 +510,7 @@ label,
   display: inline-grid;
   grid-template-columns: auto auto;
   align-items: center;
-  gap: 7px;
+  gap: 9px;
   border: 1px solid var(--line);
   background: #f7f4ee;
   border-radius: 999px;
@@ -503,6 +546,33 @@ label,
   font-weight: 850;
   line-height: 1.2;
   text-align: center;
+}
+
+.dashboard-values {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dashboard-values div {
+  background: #f7f4ee;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px 10px;
+  display: grid;
+  gap: 4px;
+  text-align: center;
+}
+
+.dashboard-values strong {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.dashboard-values span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .dashboard-list {
@@ -864,6 +934,7 @@ pre {
     font-size: 28px;
   }
 
+  .momentum-summary,
   .log-grid,
   .dashboard-card-row,
   .dashboard-card-row-outcomes,
