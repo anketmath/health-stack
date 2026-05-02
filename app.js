@@ -1324,16 +1324,11 @@ function formatDuration(seconds) {
 }
 
 function sleepStackItems(sleep) {
-  const profileStack = state.profile.sleepPillStack?.trim();
   const items = [];
-  if (profileStack) items.push(`Profile stack: ${profileStack}`);
   if (sleep?.fields?.supplementModified) {
     items.push(`Changed last night: ${sleep.fields.modifiedPills || sleep.fields.pills || "modified stack logged"}`);
     if (sleep.fields.savedToProfile) items.push("Saved to profile from this sleep log.");
-  } else if (sleep?.fields?.pills) {
-    items.push("Used profile stack for this night.");
   }
-  if (!items.length) items.push("No sleep stack saved in profile yet.");
   return items;
 }
 
