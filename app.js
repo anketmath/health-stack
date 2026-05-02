@@ -1068,32 +1068,25 @@ function renderDashboard() {
     {
       title: "Exercise",
       status: exerciseLogged ? "green" : "red",
-      metric: sessionMetric((byType.exercise || []).length),
-      streak: exerciseStreak,
-      showStreak: true,
-      items: rawItems(byType.exercise),
+      metric: "",
+      items: exerciseItems(byType.exercise),
     },
     {
       title: "Diet",
       status: dietStatus.status,
       metric: `${nutrition.calories || 0} cal · ${nutrition.protein || 0}g protein`,
-      showStreak: false,
       items: [],
     },
     {
       title: "Meditation",
       status: medMinutes > 0 ? "green" : "red",
       metric: `${medMinutes || 0} min`,
-      streak: meditationStreak,
-      showStreak: true,
       items: rawItems(byType.meditation),
     },
     {
       title: "Digital Minimalism",
       status: social?.fields?.abstained ? "green" : social ? "red" : "yellow",
       metric: social?.fields?.abstained ? "Abstained" : social ? "Used" : "Not set",
-      streak: digitalStreak,
-      showStreak: true,
       items: social?.fields?.abstained ? ["Abstained"] : social ? ["Not abstained"] : [],
     },
   ];
@@ -1103,9 +1096,8 @@ function renderDashboard() {
       title: "Sleep and readiness",
       status: combinedSleepStatus(sleep, selectedOura),
       metric: "",
-      showStreak: false,
       values: [
-        { label: "Subjective", value: sleep?.fields?.quality ? `${sleep.fields.quality}/10` : "-" },
+        { label: "Subjective sleep", value: sleep?.fields?.quality ? `${sleep.fields.quality}/10` : "-" },
         { label: "Oura sleep", value: selectedOura?.dailySleep?.score ? `${selectedOura.dailySleep.score}` : "-" },
         { label: "Readiness", value: selectedOura?.dailyReadiness?.score ? `${selectedOura.dailyReadiness.score}` : "-" },
       ],
@@ -1187,8 +1179,27 @@ function rawItems(entries = []) {
   return entries.map((entry) => entry.rawText);
 }
 
-function sessionMetric(count) {
-  return `${count || 0} ${count === 1 ? "session" : "sessions"}`;
+function exerciseItems(entries = []) {
+  return entries.map((entry) => exerciseSummary(entry));
+}
+
+function exerciseSummary(entry) {
+  const source = entry.extraction?.summary || entry.rawText || "";
+  const cleaned = source.replace(/\s+/g, " ").trim();
+  const timeHint = /\bmorning\b/i.test(cleaned) ? "Morning " : /\bafternoon\b/i.test(cleaned) ? "Afternoon " : /\bevening\b/i.test(cleaned) ? "Evening " : "";
+  const title = exerciseTitle(cleaned);
+  const detail = cleaned.length > 110 ? `${cleaned.slice(0, 107).trim()}...` : cleaned;
+  return `${timeHint}${title}: ${detail}`;
+}
+
+function exerciseTitle(text) {
+  if (/hike|hiking/i.test(text)) return "Hike";
+  if (/walk/i.test(text)) return "Walk";
+  if (/run|jog/i.test(text)) return "Run";
+  if (/lift|strength|weights|bench|squat|deadlift|row|press/i.test(text)) return "Lift";
+  if (/yoga|mobility|stretch/i.test(text)) return "Mobility";
+  if (/bike|cycle/i.test(text)) return "Ride";
+  return "Session";
 }
 
 function sortDashboardCards(cards) {
@@ -1275,12 +1286,8 @@ function renderDashboardNotice() {
 
 function renderDashboardCard(card) {
   return `<article class="dashboard-card" data-status="${escapeHtml(card.status)}">
-    <div class="dashboard-card-top">
-      <span class="status-mark" aria-label="${escapeHtml(card.status === "green" ? "Complete" : card.status)}">${card.status === "green" ? "✓" : ""}</span>
-      ${card.showStreak ? `<span class="streak-chip"><small>Streak</small><b>${escapeHtml(card.streak || 0)}d</b></span>` : ""}
-    </div>
     <h3>${escapeHtml(card.title)}</h3>
-    ${card.values ? renderDashboardValues(card.values) : `<div class="dashboard-metric">${escapeHtml(card.metric)}</div>`}
+    ${card.values ? renderDashboardValues(card.values) : card.metric ? `<div class="dashboard-metric">${escapeHtml(card.metric)}</div>` : ""}
     ${(card.items || []).length ? `<ul class="dashboard-list">${card.items.slice(0, 3).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
   </article>`;
 }

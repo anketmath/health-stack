@@ -390,7 +390,7 @@ label,
 .momentum-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .momentum-pill {
@@ -398,11 +398,12 @@ label,
   border: 1px solid var(--line);
   border-left: 5px solid #9aa39f;
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 12px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  column-gap: 10px;
+  row-gap: 3px;
 }
 
 .momentum-pill[data-status="green"] {
@@ -444,7 +445,7 @@ label,
   padding: 16px;
   border-left: 5px solid #9aa39f;
   display: grid;
-  gap: 12px;
+  gap: 10px;
   align-content: start;
 }
 
@@ -458,13 +459,6 @@ label,
 
 .dashboard-card[data-status="red"] {
   border-left-color: var(--rose);
-}
-
-.dashboard-card-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
 }
 
 .dashboard-card h3 {
@@ -559,7 +553,8 @@ label,
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 11px 10px;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 4px;
   text-align: center;
 }
@@ -573,6 +568,7 @@ label,
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
+  line-height: 1.2;
 }
 
 .dashboard-list {
@@ -944,5 +940,13 @@ pre {
   .settings-form,
   .nav-tabs {
     grid-template-columns: 1fr;
+  }
+
+  .momentum-pill {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .momentum-streak {
+    grid-column: 2;
   }
 }
