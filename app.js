@@ -2,6 +2,8 @@ const STORAGE_KEY = "health-signals-v2";
 const LEGACY_KEY = "health-signals-v1";
 const DEFAULT_SOCIAL_DEFINITION = "No X, YT, FB, IG, TikTok, News sites (1 YT podcast or 1 article OK)";
 
+scrubSensitiveUrlParams();
+
 const initialState = {
   entries: [],
   chat: [],
@@ -48,6 +50,20 @@ const views = {
   insights: document.querySelector("#insightsView"),
   settings: document.querySelector("#settingsView"),
 };
+
+function scrubSensitiveUrlParams() {
+  if (!location.search || !window.history?.replaceState) return;
+  const url = new URL(location.href);
+  const sensitive = ["password", "pass", "pwd", "token", "access_token", "refresh_token", "code", "email"];
+  let changed = false;
+  sensitive.forEach((key) => {
+    if (url.searchParams.has(key)) {
+      url.searchParams.delete(key);
+      changed = true;
+    }
+  });
+  if (changed) window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+}
 
 function loadState() {
   const current = readJson(STORAGE_KEY);
@@ -862,7 +878,16 @@ function latestMealDayTotals(entries) {
   return [...entries]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .map((entry) => {
-      const macros = normalizeMacros(entry.mealSuggestion?.dayTotals) || normalizeMacros(entry.mealSuggestion?.dailyTotals) || normalizeMacros(entry.mealSuggestion?.totalForDay) || normalizeMacros(entry.extraction?.dayTotals);
+      const macros =
+        normalizeMacros(entry.mealSuggestion?.dayTotals) ||
+        normalizeMacros(entry.mealSuggestion?.dayTotal) ||
+        normalizeMacros(entry.mealSuggestion?.dailyTotals) ||
+        normalizeMacros(entry.mealSuggestion?.dailyTotal) ||
+        normalizeMacros(entry.mealSuggestion?.totalForDay) ||
+        normalizeMacros(entry.mealSuggestion?.todayTotal) ||
+        normalizeMacros(entry.mealSuggestion?.todayTotals) ||
+        normalizeMacros(entry.extraction?.dayTotals) ||
+        normalizeMacros(entry.extraction?.dailyTotals);
       return macros ? { entry, macros } : null;
     })
     .find(Boolean);
@@ -873,10 +898,15 @@ function macrosForMeal(entry) {
   const extraction = entry.extraction || {};
   return (
     normalizeMacros(suggestion.adjustedMeal) ||
+    normalizeMacros(suggestion.updatedMeal) ||
+    normalizeMacros(suggestion.correctedMeal) ||
     normalizeMacros(suggestion.currentMeal) ||
+    normalizeMacros(suggestion.thisMeal) ||
+    normalizeMacros(suggestion.meal) ||
     normalizeMacros(suggestion.nutritionEstimate) ||
     normalizeMacros(suggestion.estimate) ||
     normalizeMacros(suggestion.macros) ||
+    normalizeMacros(suggestion) ||
     normalizeMacros(extraction.nutrition) ||
     normalizeMacros(extraction.macros) ||
     normalizeMacros(extraction.currentMeal) ||
@@ -890,10 +920,10 @@ function macrosForMeal(entry) {
 
 function normalizeMacros(value) {
   if (!value || typeof value !== "object") return null;
-  const calories = Number(value.calories ?? value.kcal ?? value.calorieEstimate);
-  const protein = Number(value.protein ?? value.proteinGrams);
-  const carbs = Number(value.carbs ?? value.carbohydrates ?? value.carbGrams);
-  const fat = Number(value.fat ?? value.fats ?? value.fatGrams);
+  const calories = parseMacroNumber(value.calories ?? value.kcal ?? value.calorieEstimate ?? value.estimatedCalories);
+  const protein = parseMacroNumber(value.protein ?? value.proteinGrams ?? value.protein_g);
+  const carbs = parseMacroNumber(value.carbs ?? value.carbohydrates ?? value.carbGrams ?? value.carbs_g);
+  const fat = parseMacroNumber(value.fat ?? value.fats ?? value.fatGrams ?? value.fat_g);
   if (![calories, protein, carbs, fat].some(Number.isFinite)) return null;
   return {
     calories: Number.isFinite(calories) ? calories : 0,
@@ -901,6 +931,11 @@ function normalizeMacros(value) {
     carbs: Number.isFinite(carbs) ? carbs : 0,
     fat: Number.isFinite(fat) ? fat : 0,
   };
+}
+
+function parseMacroNumber(value) {
+  if (typeof value === "string") return Number(value.match(/-?\d+(\.\d+)?/)?.[0]);
+  return Number(value);
 }
 
 function addMacros(a = {}, b = {}) {
@@ -1296,18 +1331,25 @@ function mealSummaryItem(meal, hasCorrectedDayTotal = false) {
 }
 
 function ouraActivityItems(oura) {
-  const activity = oura?.dailyActivity;
-  if (!activity) return [];
+  const activity = ouraActivityForRecord(oura);
+  if (!activity) return ["No Oura activity data synced for this day."];
   const activeSeconds = secondsFromOuraActivity(activity);
   return [
     `Steps: ${formatInteger(activity.steps)}`,
     `Activity time: ${formatDuration(activeSeconds)}`,
-    `Total burn: ${formatInteger(activity.total_calories)} cal · Active burn: ${formatInteger(activity.active_calories)} cal`,
+    `Total burn: ${formatInteger(activity.total_calories ?? activity.calories_total)} cal · Active burn: ${formatInteger(activity.active_calories ?? activity.calories_active)} cal`,
   ];
 }
 
+function ouraActivityForRecord(oura) {
+  return oura?.dailyActivity || oura?.daily_activity || oura?.activity || null;
+}
+
 function secondsFromOuraActivity(activity) {
-  return ["high_activity_time", "medium_activity_time", "low_activity_time", "non_wear_time"].reduce((total, key) => total + (Number(activity[key]) || 0), 0);
+  const seconds = ["high_activity_time", "medium_activity_time", "low_activity_time", "active_time"].reduce((total, key) => total + (Number(activity[key]) || 0), 0);
+  if (seconds) return seconds;
+  const minutes = ["high_activity_minutes", "medium_activity_minutes", "low_activity_minutes", "active_minutes"].reduce((total, key) => total + (Number(activity[key]) || 0), 0);
+  return minutes * 60;
 }
 
 function formatInteger(value) {

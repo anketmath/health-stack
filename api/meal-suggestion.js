@@ -104,7 +104,11 @@ export default async function handler(request, response) {
 
   const data = await result.json();
   if (!result.ok) {
-    response.status(result.status).json({ error: data.error?.message || "OpenAI request failed" });
+    response.status(result.status).json({
+      error: data.error?.message || "OpenAI request failed",
+      code: data.error?.code || "",
+      type: data.error?.type || "",
+    });
     return;
   }
 
