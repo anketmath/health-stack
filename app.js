@@ -475,8 +475,9 @@ function handleChatActionClick(event) {
 }
 
 async function askChatQuestion(question, options = {}) {
-  addChatMessage("user", options.displayText || question);
-  const pendingId = addChatMessage("assistant", "Thinking with your recent logs...");
+  const turnId = createId();
+  addChatMessage("user", options.displayText || question, { turnId, order: 0 });
+  const pendingId = addChatMessage("assistant", "Thinking with your recent logs...", { turnId, order: 1 });
 
   try {
     const response = await fetch("/api/chat", {
@@ -668,8 +669,8 @@ function entriesForChatPlan(plan) {
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-function addChatMessage(role, text) {
-  const message = { id: createId(), role, text, createdAt: new Date().toISOString() };
+function addChatMessage(role, text, meta = {}) {
+  const message = { id: createId(), role, text, createdAt: new Date().toISOString(), ...meta };
   state.chat.push(message);
   state.chat = state.chat.slice(-30);
   saveState();
@@ -1131,8 +1132,6 @@ function estimateMealFromText(text) {
 }
 
 function nutritionTotals(entries) {
-  const latestTotals = latestMealDayTotals(entries)?.macros;
-  if (latestTotals) return latestTotals;
   return entries.reduce((total, entry) => addMacros(total, macrosForMeal(entry)), { calories: 0, protein: 0, carbs: 0, fat: 0 });
 }
 
@@ -1680,23 +1679,19 @@ function dietInTarget(nutrition, meals, target) {
 }
 
 function dietItems(nutrition, target, meals = []) {
-  const latestTotals = latestMealDayTotals(meals);
-  const mealItems = latestTotals ? meals.map((meal) => mealSummaryItem(meal, meal.id === latestTotals.entry.id)) : meals.map((meal) => mealSummaryItem(meal, false));
   return [
-    ...mealItems,
-    latestTotals ? `Latest corrected day total: ${formatMacroLine("", latestTotals.macros).replace(/^: /, "")}` : "",
+    ...meals.map((meal) => mealSummaryItem(meal)),
     `Target: ${target.calories.min}-${target.calories.max} cal · ${target.protein.min}-${target.protein.max}g protein`,
     `${target.source || "Target"}: ${target.reasoning || "Based on profile, goal, and selected-day exercise."}`,
     `Actual: ${nutrition.calories || 0} cal · ${nutrition.protein || 0}g protein`,
   ].filter(Boolean);
 }
 
-function mealSummaryItem(meal, hasCorrectedDayTotal = false) {
+function mealSummaryItem(meal) {
   const macros = macrosForMeal(meal);
   const summary = meal.extraction?.summary || meal.rawText || "Meal";
   const label = summary.length > 70 ? `${summary.slice(0, 67).trim()}...` : summary;
-  const suffix = hasCorrectedDayTotal ? " · day total corrected here" : "";
-  return `${label}: ${Math.round(macros.calories || 0)} cal · ${Math.round(macros.protein || 0)}g protein${suffix}`;
+  return `${label}: ${Math.round(macros.calories || 0)} cal · ${Math.round(macros.protein || 0)}g protein`;
 }
 
 function ouraActivityItems(oura) {
@@ -2022,14 +2017,28 @@ function renderPayload() {
 function renderChat() {
   const container = document.querySelector("#chatMessages");
   const messages = state.chat.length ? state.chat : [{ role: "assistant", text: "Ask about training, meals, sleep, meditation, social media, or how your recent logs relate to your profile and goals." }];
-  container.innerHTML = messages
+  container.innerHTML = orderedChatMessages(messages)
     .map(
       (message) => `<article class="chat-message ${escapeHtml(message.role)}">
         <p>${escapeHtml(message.text)}</p>
       </article>`,
     )
     .join("");
-  container.scrollTop = container.scrollHeight;
+  container.scrollTop = 0;
+}
+
+function orderedChatMessages(messages) {
+  const groups = new Map();
+  messages.forEach((message, index) => {
+    const key = message.turnId || message.id;
+    if (!groups.has(key)) groups.set(key, { createdAt: message.createdAt, index, messages: [] });
+    const group = groups.get(key);
+    if (message.createdAt < group.createdAt) group.createdAt = message.createdAt;
+    group.messages.push({ ...message, index });
+  });
+  return Array.from(groups.values())
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.index - a.index)
+    .flatMap((group) => group.messages.sort((a, b) => (a.order ?? a.index) - (b.order ?? b.index)));
 }
 
 function renderSettings() {
