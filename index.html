@@ -155,6 +155,12 @@
           </header>
 
           <section class="chat-panel">
+            <form id="chatForm" class="chat-form">
+              <label>Question
+                <textarea name="question" placeholder="What should I pay attention to today based on my recent logs?" required></textarea>
+              </label>
+              <button type="submit">Ask</button>
+            </form>
             <div class="chat-actions" id="chatActions" aria-label="Suggested health analyses">
               <button type="button" data-chat-action="analyze-today">Analyze today</button>
               <button type="button" data-chat-action="analyze-yesterday">Analyze yesterday</button>
@@ -170,12 +176,6 @@
                 <p>Ask about training, meals, sleep, meditation, social media, or how your recent logs relate to your profile and goals.</p>
               </article>
             </div>
-            <form id="chatForm" class="chat-form">
-              <label>Question
-                <textarea name="question" placeholder="What should I pay attention to today based on my recent logs?" required></textarea>
-              </label>
-              <button type="submit">Ask</button>
-            </form>
           </section>
         </section>
 

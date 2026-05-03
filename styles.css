@@ -838,6 +838,7 @@ button[type="submit"] {
   padding: 20px;
   display: grid;
   gap: 16px;
+  align-content: start;
 }
 
 .chat-actions {
@@ -849,21 +850,22 @@ button[type="submit"] {
 .chat-actions button {
   min-height: 48px;
   padding: 10px 12px;
-  text-align: left;
-  background: #f7f4ee;
-  color: var(--ink);
-  border: 1px solid var(--line);
+  text-align: center;
+  background: #eef5f1;
+  color: var(--green-dark);
+  border: 1px solid rgba(52, 112, 84, 0.35);
+  font-weight: 750;
 }
 
 .chat-actions button:hover {
   border-color: var(--green);
-  background: #eef5f1;
+  background: #e2eee8;
 }
 
 .chat-messages {
   display: grid;
   gap: 12px;
-  min-height: 360px;
+  min-height: 220px;
   align-content: start;
 }
 
@@ -893,6 +895,8 @@ button[type="submit"] {
 .chat-form {
   display: grid;
   gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
 }
 
 .chat-form button {
