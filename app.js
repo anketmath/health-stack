@@ -408,6 +408,7 @@ function setupDataActions() {
   });
 
   document.querySelector("#recordsList").addEventListener("submit", handleEditSubmit);
+  document.querySelector("#recordsList").addEventListener("submit", handleMealReassessmentSubmit);
 
   document.querySelector("#exportButton").addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
@@ -503,17 +504,82 @@ function showView(key) {
 }
 
 function buildChatPayload(question) {
+  const contextPlan = chatContextPlan(question);
   return {
     date: today(),
     question,
     profile: state.profile,
     settings: state.settings,
-    recentEntries: entriesFromLastDays(14),
-    oura: ouraContext(14),
-    supplementContext: supplementContext(30),
+    contextPlan,
+    recentEntries: compactEntries(entriesForChatPlan(contextPlan)),
+    oura: contextPlan.includeOura ? compactOuraForDates(contextPlan.dates) : null,
+    supplementContext: contextPlan.includeSupplements ? supplementContext(contextPlan.supplementDays) : null,
     chatHistory: state.chat.slice(-8),
-    instruction: "Answer using the user's profile, goals, settings, and recent health logs. Be practical and cautious, and clearly state uncertainty.",
+    instruction: "Answer using the supplied context plan, profile, goals, settings, and selected health logs. The app intentionally sends only the dates and categories likely needed for the question; ask for a broader range if the supplied context is too narrow. Be practical and cautious, and clearly state uncertainty.",
   };
+}
+
+function chatContextPlan(question) {
+  const text = String(question || "").toLowerCase();
+  const todayDate = today();
+  let days = 14;
+  let label = "recent 14 days";
+  let dates = null;
+
+  const explicitDays = text.match(/\b(?:last|past)\s+(\d{1,2})\s*(day|days|week|weeks|month|months)\b/);
+  if (/\byesterday\b/.test(text)) {
+    dates = [previousDate(todayDate)];
+    days = 1;
+    label = "yesterday";
+  } else if (/\btoday\b|\bso far\b/.test(text)) {
+    dates = [todayDate];
+    days = 1;
+    label = "today";
+  } else if (explicitDays) {
+    const count = Number(explicitDays[1]);
+    const unit = explicitDays[2];
+    days = Math.min(unit.startsWith("month") ? count * 30 : unit.startsWith("week") ? count * 7 : count, 60);
+    label = `last ${days} days`;
+  } else if (/\b(this|last|past)\s+week\b|\bweekly\b/.test(text)) {
+    days = 7;
+    label = "last 7 days";
+  } else if (/\bmonth\b|\bmonthly\b|\blong[- ]?term\b|\btrend\b|\btrends\b|\bpattern\b|\bpatterns\b|\bcorrelat/.test(text)) {
+    days = 30;
+    label = "last 30 days";
+  }
+
+  dates = dates || recentDays(days);
+  const categories = chatCategoriesForQuestion(text);
+  const includesSleep = categories.includes("all") || categories.includes("sleep");
+
+  return {
+    label,
+    dates,
+    categories,
+    includeOura: categories.includes("all") || categories.includes("sleep") || categories.includes("exercise"),
+    includeSupplements: includesSleep,
+    supplementDays: includesSleep ? Math.max(days, 30) : 0,
+  };
+}
+
+function chatCategoriesForQuestion(text) {
+  const categories = new Set();
+  if (/\bmeal|diet|food|ate|eat|protein|carb|fat|calorie|nutrition|breakfast|lunch|dinner|snack\b/.test(text)) categories.add("meal");
+  if (/\bexercise|workout|lift|lifting|hike|walk|run|training|steps|activity|burn|calories burned\b/.test(text)) categories.add("exercise");
+  if (/\bsleep|readiness|oura|recovery|rest|supplement|pill|stack|bedtime\b/.test(text)) categories.add("sleep");
+  if (/\bmeditat|mindful|breath\b/.test(text)) categories.add("meditation");
+  if (/\bsocial|digital|minimalism|abstain|x\b|youtube|yt|instagram|ig|tiktok|news\b/.test(text)) categories.add("social");
+  if (!categories.size || /\boverall|everything|day|doing|health|summary|trend|pattern|correlat|why\b/.test(text)) return ["all"];
+  return Array.from(categories);
+}
+
+function entriesForChatPlan(plan) {
+  const allowedDates = new Set(plan.dates || recentDays(14));
+  const includeAll = (plan.categories || []).includes("all");
+  return state.entries
+    .filter((entry) => allowedDates.has(entry.date))
+    .filter((entry) => includeAll || plan.categories.includes(entry.type))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 function addChatMessage(role, text) {
@@ -678,9 +744,9 @@ function buildWorkoutPayload(request, feedback) {
     feedback,
     priorDraft: state.workoutDraft,
     profile: state.profile,
-    oura: ouraContext(14),
-    recentExercise: entriesFromLastDays(21).filter((entry) => entry.type === "exercise"),
-    recentSleep: entriesFromLastDays(7).filter((entry) => entry.type === "sleep"),
+    oura: compactOuraContext(14),
+    recentExercise: compactEntries(entriesFromLastDays(21).filter((entry) => entry.type === "exercise")),
+    recentSleep: compactEntries(entriesFromLastDays(7).filter((entry) => entry.type === "sleep")),
     instruction: "Generate a useful home workout using goals, available equipment, familiar exercises, recent exercise load, recent hikes/leg fatigue, and past weights/reps when present. Support hypertrophy progression with sensible reps/sets/weights.",
   };
 }
@@ -742,13 +808,13 @@ function renderWorkoutPanel() {
   </div>`;
 }
 
-async function generateMealSuggestion(entryId) {
+async function generateMealSuggestion(entryId, options = {}) {
   const entry = state.entries.find((item) => item.id === entryId);
   if (!entry) return;
   const panel = document.querySelector("#mealSuggestionPanel");
-  panel.innerHTML = `<strong>Next meal suggestion</strong><p>Generating...</p>`;
+  panel.innerHTML = `<strong>Next meal suggestion</strong><p>${options.reassessmentNote ? "Re-assessing..." : "Generating..."}</p>`;
 
-  const payload = buildMealSuggestionPayload(entry);
+  const payload = buildMealSuggestionPayload(entry, options);
   try {
     const response = await fetch("/api/meal-suggestion", {
       method: "POST",
@@ -758,40 +824,115 @@ async function generateMealSuggestion(entryId) {
     if (!response.ok) throw new Error(await response.text());
     const data = await response.json();
     entry.mealSuggestion = data.suggestion;
+    if (options.reassessmentNote) entry.mealSuggestion.reassessmentNote = options.reassessmentNote;
+    entry.updatedAt = new Date().toISOString();
     saveState();
     syncEntryToCloud(entry);
-    renderMealSuggestion(data.suggestion, "Generated by LLM");
+    renderDashboard();
+    renderRecords();
+    renderPayload();
+    renderMealSuggestion(data.suggestion, options.reassessmentNote ? "Re-assessed by LLM" : "Generated by LLM");
+    if (options.reassessmentNote) showToast("Meal nutrition re-assessed");
   } catch {
     const suggestion = localMealSuggestion(payload);
     entry.mealSuggestion = suggestion;
+    if (options.reassessmentNote) entry.mealSuggestion.reassessmentNote = options.reassessmentNote;
+    entry.updatedAt = new Date().toISOString();
     saveState();
     syncEntryToCloud(entry);
-    renderMealSuggestion(suggestion, "Local fallback");
+    renderDashboard();
+    renderRecords();
+    renderPayload();
+    renderMealSuggestion(suggestion, options.reassessmentNote ? "Local re-assessment fallback" : "Local fallback");
+    if (options.reassessmentNote) showToast("Meal nutrition re-assessed locally");
   }
 }
 
-function buildMealSuggestionPayload(mealEntry) {
-  const todayEntries = state.entries.filter((entry) => entry.date === today()).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+function buildMealSuggestionPayload(mealEntry, options = {}) {
+  const logDate = mealEntry.date || today();
+  const todayEntries = state.entries.filter((entry) => entry.date === logDate).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const priorMeals = todayEntries.filter((entry) => entry.type === "meal" && entry.id !== mealEntry.id);
   return {
-    date: today(),
+    date: logDate,
     localTime: nowTime(),
     timeContext: {
       lateMealCutoff: "20:30",
       lateNight: "21:00 or later",
       assumption: "If a meal or snack is logged around 9 PM or later, the user is likely approaching sleep and should usually not be told to eat another normal meal in 3-5 hours.",
     },
-    profile: state.profile,
-    oura: ouraContext(14),
-    latestMeal: mealEntry,
+    profile: nutritionProfile(),
+    latestMeal: compactMealEntry(mealEntry),
+    previousMealSuggestion: compactMealSuggestion(mealEntry.mealSuggestion),
+    reassessmentNote: options.reassessmentNote || "",
     priorNutrition: nutritionTotals(priorMeals),
     today: {
-      meals: todayEntries.filter((entry) => entry.type === "meal"),
-      exercise: todayEntries.filter((entry) => entry.type === "exercise"),
-      sleep: todayEntries.filter((entry) => entry.type === "sleep"),
-      meditation: todayEntries.filter((entry) => entry.type === "meditation"),
+      meals: todayEntries.filter((entry) => entry.type === "meal").map(compactMealEntry),
+      exercise: todayEntries.filter((entry) => entry.type === "exercise").map(compactExerciseEntry),
+      ouraActivity: ouraActivitySummaryForDate(logDate),
     },
-    instruction: "Suggest when to eat the next meal and rough protein, carbs, and fats based on profile/goals, current local time, latest meal timing, today's meals, and today's exercise. If it is late evening, consider sleep timing and avoid suggesting another normal meal before bed unless there is a clear reason.",
+    instruction: "Suggest when to eat the next meal and rough protein, carbs, and fats using only the nutrition profile, current local time, today's meals, the current meal, today's logged exercise, and today's Oura activity summary. Do not use prior days or sleep context for this common meal action. If reassessmentNote is present, treat this as a correction request and update the current meal and day totals using that extra information. If it is late evening, consider sleep timing and avoid suggesting another normal meal before bed unless there is a clear reason.",
+  };
+}
+
+function nutritionProfile() {
+  return {
+    age: state.profile.age || "",
+    sex: state.profile.sex || "",
+    height: state.profile.height || "",
+    weight: state.profile.weight || "",
+    bodyFat: state.profile.bodyFat || "",
+    activityLevel: state.profile.activityLevel || "",
+    goal: state.profile.goal || "",
+    dietPreferences: state.profile.dietPreferences || "",
+    profileNotes: truncateText(state.profile.profileNotes, 500),
+  };
+}
+
+function compactMealEntry(entry) {
+  return {
+    id: entry.id,
+    date: entry.date,
+    createdAt: entry.createdAt,
+    rawText: truncateText(entry.rawText, 260),
+    macros: macrosForMeal(entry),
+    extraction: compactMealExtraction(entry.extraction),
+    mealSuggestion: compactMealSuggestion(entry.mealSuggestion),
+  };
+}
+
+function compactMealExtraction(extraction) {
+  if (!extraction) return null;
+  return {
+    summary: truncateText(extraction.summary, 180),
+    foods: (extraction.foods || []).slice(0, 10),
+    mealTime: extraction.mealTime || extraction.time || null,
+    nutrition: normalizeMacros(extraction.nutrition) || normalizeMacros(extraction.macros) || normalizeMacros(extraction.currentMeal),
+  };
+}
+
+function compactExerciseEntry(entry) {
+  return {
+    id: entry.id,
+    date: entry.date,
+    createdAt: entry.createdAt,
+    rawText: truncateText(entry.rawText, 260),
+    summary: truncateText(entry.extraction?.summary, 180),
+    durationMinutes: entry.extraction?.durationMinutes ?? entry.fields?.durationMinutes ?? null,
+    intensity: entry.extraction?.intensity ?? entry.fields?.intensity ?? null,
+  };
+}
+
+function ouraActivitySummaryForDate(date) {
+  const activity = ouraActivityForRecord(ouraRecordFor(date));
+  if (!activity) return null;
+  const activitySeconds = secondsFromOuraActivity(activity);
+  return {
+    score: activity.score ?? null,
+    steps: activity.steps ?? null,
+    activitySeconds,
+    activityTime: formatDuration(activitySeconds),
+    totalCalories: activity.total_calories ?? activity.calories_total ?? null,
+    activeCalories: activity.active_calories ?? activity.calories_active ?? null,
   };
 }
 
@@ -820,9 +961,10 @@ function localMealSuggestion(payload) {
   const fats = goal.includes("fat loss") || goal.includes("cut") ? "10-20g fats" : "15-30g fats";
 
   if (isLateEvening) {
+    const currentMeal = adjustMealEstimate(estimateMealFromText(payload.latestMeal.rawText), payload.reassessmentNote);
     return {
-      currentMeal: estimateMealFromText(payload.latestMeal.rawText),
-      dayTotals: addMacros(payload.priorNutrition, estimateMealFromText(payload.latestMeal.rawText)),
+      currentMeal,
+      dayTotals: addMacros(payload.priorNutrition, currentMeal),
       nextMeal: {
         time: "Breakfast tomorrow",
         calories: hardTraining ? 450 : 350,
@@ -830,11 +972,11 @@ function localMealSuggestion(payload) {
         carbs: hardTraining ? 55 : 35,
         fat: hardTraining ? 15 : 12,
       },
-      reasoning: "Local estimate noticed the meal was logged late. Eating another full meal in 3-5 hours would likely collide with sleep.",
+      reasoning: payload.reassessmentNote ? "Local re-assessment used your correction note and noticed the meal was logged late." : "Local estimate noticed the meal was logged late. Eating another full meal in 3-5 hours would likely collide with sleep.",
     };
   }
 
-  const currentMeal = estimateMealFromText(payload.latestMeal.rawText);
+  const currentMeal = adjustMealEstimate(estimateMealFromText(payload.latestMeal.rawText), payload.reassessmentNote);
   return {
     currentMeal,
     dayTotals: addMacros(payload.priorNutrition, currentMeal),
@@ -845,7 +987,19 @@ function localMealSuggestion(payload) {
       carbs: Number(carbs.match(/\d+/)?.[0]) || 45,
       fat: Number(fats.match(/\d+/)?.[0]) || 15,
     },
-    reasoning: "Local estimate based on your logged meal, today's exercise text, and saved goal. The LLM version will use richer extraction when deployed.",
+    reasoning: payload.reassessmentNote ? "Local re-assessment used your correction note plus the logged meal, today's exercise text, and saved goal." : "Local estimate based on your logged meal, today's exercise text, and saved goal. The LLM version will use richer extraction when deployed.",
+  };
+}
+
+function adjustMealEstimate(macros, note) {
+  const text = String(note || "").toLowerCase();
+  if (!text) return macros;
+  const factor = /very large|huge|much higher|way too low/i.test(text) ? 1.45 : /large|low|bigger|more calories|under/i.test(text) ? 1.25 : /small|high|less|over/i.test(text) ? 0.8 : 1;
+  return {
+    calories: Math.round(macros.calories * factor),
+    protein: Math.round(macros.protein * factor),
+    carbs: Math.round(macros.carbs * factor),
+    fat: Math.round(macros.fat * factor),
   };
 }
 
@@ -876,7 +1030,7 @@ function nutritionTotals(entries) {
 
 function latestMealDayTotals(entries) {
   return [...entries]
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .sort((a, b) => (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt))
     .map((entry) => {
       const macros =
         normalizeMacros(entry.mealSuggestion?.dayTotals) ||
@@ -1008,9 +1162,9 @@ function buildInsightPayload(entries) {
   return {
     date: today(),
     range: "last 7 days",
-    entries,
+    entries: compactEntries(entries),
     profile: state.profile,
-    oura: ouraContext(30),
+    oura: compactOuraContext(30),
     supplementContext: supplementContext(30),
     instruction: "Find useful patterns across exercise, meals, subjective sleep quality, pills/supplements, meditation, social media abstinence, and available extracted fields.",
   };
@@ -1155,6 +1309,111 @@ function ouraContext(days = 14) {
   };
 }
 
+function compactOuraContext(days = 14) {
+  const context = ouraContext(days);
+  return {
+    lastSync: context.lastSync,
+    unavailable: (context.unavailable || []).slice(0, 5),
+    averageSleepScore: context.averageSleepScore,
+    averageReadiness: context.averageReadiness,
+    averageSteps: context.averageSteps,
+    records: context.records.map(compactOuraRecord),
+  };
+}
+
+function compactOuraForDates(dates = recentDays(14)) {
+  const allowedDates = new Set(dates);
+  const records = (state.oura.records || []).filter((record) => allowedDates.has(record.date)).sort((a, b) => a.date.localeCompare(b.date));
+  return {
+    lastSync: state.oura.lastSync || "",
+    unavailable: (state.oura.unavailable || []).slice(0, 5),
+    averageSleepScore: average(records.map((record) => record.dailySleep?.score)),
+    averageReadiness: average(records.map((record) => record.dailyReadiness?.score)),
+    averageSteps: average(records.map((record) => ouraActivityForRecord(record)?.steps)),
+    records: records.map(compactOuraRecord),
+  };
+}
+
+function compactOuraRecord(record) {
+  const activity = ouraActivityForRecord(record);
+  return {
+    date: record.date,
+    sleepScore: record.dailySleep?.score ?? null,
+    readinessScore: record.dailyReadiness?.score ?? null,
+    activityScore: activity?.score ?? null,
+    steps: activity?.steps ?? null,
+    activeCalories: activity?.active_calories ?? activity?.calories_active ?? null,
+    totalCalories: activity?.total_calories ?? activity?.calories_total ?? null,
+    activitySeconds: activity ? secondsFromOuraActivity(activity) : null,
+    spo2: record.dailySpo2?.spo2_percentage?.average ?? record.dailySpo2?.average ?? null,
+    stressHigh: record.dailyStress?.stress_high ?? null,
+    workouts: (record.workout || []).slice(0, 4).map((workout) => ({
+      activity: workout.activity || workout.type || "",
+      start: workout.start_datetime || "",
+      calories: workout.calories || null,
+      intensity: workout.intensity || "",
+    })),
+    sessions: (record.sessions || []).slice(0, 4).map((session) => ({
+      type: session.type || "",
+      start: session.start_datetime || "",
+      duration: session.duration || null,
+    })),
+  };
+}
+
+function compactEntries(entries) {
+  return entries.map(compactEntry);
+}
+
+function compactEntry(entry) {
+  return {
+    id: entry.id,
+    type: entry.type,
+    date: entry.date,
+    createdAt: entry.createdAt,
+    rawText: truncateText(entry.rawText, 360),
+    fields: compactFields(entry),
+    extraction: compactExtraction(entry.extraction),
+    mealSuggestion: compactMealSuggestion(entry.mealSuggestion),
+  };
+}
+
+function compactFields(entry) {
+  if (entry.type === "meal") return { macros: macrosForMeal(entry) };
+  if (entry.type === "sleep") return { quality: entry.fields?.quality, pills: entry.fields?.pills, supplementModified: entry.fields?.supplementModified, sleepNight: entry.fields?.sleepNight };
+  if (entry.type === "meditation") return { minutes: entry.fields?.minutes, time: entry.fields?.time };
+  if (entry.type === "social") return { abstained: entry.fields?.abstained };
+  return entry.fields || {};
+}
+
+function compactExtraction(extraction) {
+  if (!extraction) return null;
+  return {
+    summary: truncateText(extraction.summary, 220),
+    durationMinutes: extraction.durationMinutes ?? null,
+    intensity: extraction.intensity ?? null,
+    times: extraction.times || [],
+    foods: (extraction.foods || []).slice(0, 12),
+    sleepQuality: extraction.sleepQuality ?? extraction.quality ?? null,
+    socialAbstained: extraction.socialAbstained ?? null,
+  };
+}
+
+function compactMealSuggestion(suggestion) {
+  if (!suggestion) return null;
+  return {
+    currentMeal: normalizeMacros(suggestion.currentMeal) || normalizeMacros(suggestion.adjustedMeal) || normalizeMacros(suggestion.correctedMeal),
+    dayTotals: latestMealDayTotals([{ mealSuggestion: suggestion, createdAt: new Date().toISOString() }])?.macros || null,
+    nextMeal: suggestion.nextMeal || null,
+    reasoning: truncateText(suggestion.reasoning, 280),
+  };
+}
+
+function truncateText(value, limit) {
+  const text = String(value || "");
+  return text.length > limit ? `${text.slice(0, limit - 3)}...` : text;
+}
+
 function ouraRecordFor(date) {
   return (state.oura.records || []).find((record) => record.date === date);
 }
@@ -1177,7 +1436,7 @@ function renderDashboard() {
   const dietChecked = dietInTarget(nutrition, meals, dietTarget);
   const exerciseStreak = streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "exercise"));
   const meditationStreak = streakAsOf(selectedDashboardDate, (date) => hasEntryOnDate(date, "meditation"));
-  const digitalStreak = streakAsOf(selectedDashboardDate, (date) => hasSocialAbstainedOnDate(date));
+  const digitalStreak = streakAsOf(selectedDashboardDate, (date) => hasSocialAbstainedOnDate(date), { pendingToday: !(byType.social || []).length });
   const dietStreak = streakAsOf(selectedDashboardDate, (date) => {
     const dateMeals = state.entries.filter((entry) => entry.date === date && entry.type === "meal");
     return dietInTarget(nutritionTotals(dateMeals), dateMeals, dietTargetForDate(date));
@@ -1208,12 +1467,12 @@ function renderDashboard() {
     {
       title: "Sleep and readiness",
       status: combinedSleepStatus(sleep, selectedOura),
-      summary: [sleep?.fields?.quality ? `${sleep.fields.quality}/10` : "-", selectedOura?.dailySleep?.score ? `${selectedOura.dailySleep.score}` : "-", selectedOura?.dailyReadiness?.score ? `${selectedOura.dailyReadiness.score}` : "-"].join(" · "),
+      summary: [formatScore100(subjectiveSleepScore100(sleep)), formatScore100(selectedOura?.dailySleep?.score), formatScore100(selectedOura?.dailyReadiness?.score)].join(" · "),
       noStreak: true,
       values: [
-        { label: "Subjective sleep", value: sleep?.fields?.quality ? `${sleep.fields.quality}/10` : "-" },
-        { label: "Oura sleep", value: selectedOura?.dailySleep?.score ? `${selectedOura.dailySleep.score}` : "-" },
-        { label: "Readiness", value: selectedOura?.dailyReadiness?.score ? `${selectedOura.dailyReadiness.score}` : "-" },
+        { label: "Subjective sleep", value: formatScore100(subjectiveSleepScore100(sleep)) },
+        { label: "Oura sleep", value: formatScore100(selectedOura?.dailySleep?.score) },
+        { label: "Readiness", value: formatScore100(selectedOura?.dailyReadiness?.score) },
       ],
       items: sleepStackItems(sleep),
       order: 3,
@@ -1274,9 +1533,11 @@ function hasSocialAbstainedOnDate(date) {
   return state.entries.some((entry) => entry.date === date && entry.type === "social" && entry.fields?.abstained);
 }
 
-function streakAsOf(date, isActive) {
+function streakAsOf(date, isActive, options = {}) {
   let streak = 0;
   const cursor = new Date(`${date}T12:00:00`);
+  const todayIsPending = date === today() && !isActive(date) && (options.pendingToday ?? true);
+  if (todayIsPending) cursor.setDate(cursor.getDate() - 1);
   for (let index = 0; index < 365; index += 1) {
     const day = cursor.toISOString().slice(0, 10);
     if (!isActive(day)) break;
@@ -1425,10 +1686,12 @@ function exerciseTitle(text) {
 }
 
 function sortDashboardCards(cards) {
-  const rank = { green: 0, yellow: 1, red: 2 };
   return cards
     .map((card, index) => ({ ...card, index }))
-    .sort((a, b) => (rank[a.status] ?? 3) - (rank[b.status] ?? 3) || (b.streak || 0) - (a.streak || 0) || a.index - b.index);
+    .sort((a, b) => {
+      if (a.noStreak !== b.noStreak) return a.noStreak ? 1 : -1;
+      return (b.streak || 0) - (a.streak || 0) || Number(b.status === "green") - Number(a.status === "green") || a.index - b.index;
+    });
 }
 
 function proteinTargetGrams() {
@@ -1453,11 +1716,10 @@ function calorieTargetEstimateForDate(date) {
 }
 
 function combinedSleepStatus(sleep, oura) {
-  const subjective = Number(sleep?.fields?.quality);
   const ouraSleep = Number(oura?.dailySleep?.score);
   const readiness = Number(oura?.dailyReadiness?.score);
   const scores = [
-    Number.isFinite(subjective) ? subjective * 10 : null,
+    subjectiveSleepScore100(sleep),
     Number.isFinite(ouraSleep) ? ouraSleep : null,
     Number.isFinite(readiness) ? readiness : null,
   ].filter((score) => score !== null);
@@ -1466,6 +1728,16 @@ function combinedSleepStatus(sleep, oura) {
   if (averageScore >= 78) return "green";
   if (averageScore >= 62) return "yellow";
   return "red";
+}
+
+function subjectiveSleepScore100(sleep) {
+  const score = Number(sleep?.fields?.quality);
+  return Number.isFinite(score) ? Math.round(score * 10) : null;
+}
+
+function formatScore100(value) {
+  const score = Number(value);
+  return Number.isFinite(score) ? `${Math.round(score)}` : "-";
 }
 
 function renderDashboardNotice() {
@@ -1528,10 +1800,14 @@ function renderRecords() {
           <pre>${escapeHtml(JSON.stringify(entry.extraction || entry.fields || {}, null, 2))}</pre>
         </details>
         ${
-          entry.mealSuggestion
+          entry.type === "meal"
             ? `<details>
-                <summary>Meal suggestion</summary>
-                <pre>${escapeHtml(JSON.stringify(entry.mealSuggestion, null, 2))}</pre>
+                <summary>Meal nutrition</summary>
+                ${entry.mealSuggestion ? `<pre>${escapeHtml(JSON.stringify(entry.mealSuggestion, null, 2))}</pre>` : `<p>No LLM estimate saved yet.</p>`}
+                <form class="reassess-meal-form stacked-form" data-id="${escapeHtml(entry.id)}">
+                  <textarea name="note" placeholder="Optional: large portion, calories feel low, add more detail..."></textarea>
+                  <button class="secondary-button" type="submit">${entry.mealSuggestion ? "Re-assess nutrition" : "Run nutrition estimate"}</button>
+                </form>
               </details>`
             : ""
         }
@@ -1602,6 +1878,16 @@ async function handleEditSubmit(event) {
   showToast("Entry updated");
   const extracted = await extractEntry(entry);
   if (extracted.type === "meal") await generateMealSuggestion(extracted.id);
+}
+
+async function handleMealReassessmentSubmit(event) {
+  if (!event.target.matches(".reassess-meal-form")) return;
+  event.preventDefault();
+  const entry = state.entries.find((item) => item.id === event.target.dataset.id);
+  if (!entry || entry.type !== "meal") return;
+  const note = Object.fromEntries(new FormData(event.target).entries()).note?.trim() || "";
+  showToast(note ? "Re-assessing meal with your note..." : "Running meal nutrition estimate...");
+  await generateMealSuggestion(entry.id, { reassessmentNote: note });
 }
 
 function editedFieldsFor(entry, data) {

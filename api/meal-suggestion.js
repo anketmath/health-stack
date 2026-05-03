@@ -27,7 +27,7 @@ export default async function handler(request, response) {
         {
           role: "system",
           content:
-            "You are a practical nutrition planning assistant. Estimate current-meal calories/protein/carbs/fat, day-so-far totals, and the next meal time/macros. Use only supplied profile, local time, prior nutrition, exercise, Oura readiness/activity context, goals, and logs. Make suggestions plausible for the user's day and goal, especially fat reduction or hypertrophy. If the latest meal is late evening or near bedtime, do not recommend another normal meal in 3-5 hours; prefer breakfast next or a small optional pre-bed snack only if hunger/recovery warrants it. If profile data is missing, say the guidance is rough. Return only valid JSON.",
+            "You are a practical nutrition planning assistant. Estimate current-meal calories/protein/carbs/fat, day-so-far totals, and the next meal time/macros. Use only the supplied nutrition profile, local time, current meal, meals eaten today, today's logged exercise, and today's Oura activity summary. If reassessmentNote is present, treat it as user-supplied correction context, compare against the previous meal suggestion, and update currentMeal and dayTotals accordingly. Do not infer from sleep context or previous days because this endpoint is optimized for frequent meal logging. Make suggestions plausible for the user's day and goal, especially fat reduction or hypertrophy. If the latest meal is late evening or near bedtime, do not recommend another normal meal in 3-5 hours; prefer breakfast next or a small optional pre-bed snack only if hunger/recovery warrants it. If profile data is missing, say the guidance is rough. Return only valid JSON.",
         },
         {
           role: "user",
@@ -35,10 +35,13 @@ export default async function handler(request, response) {
             profile: payload.profile,
             localTime: payload.localTime,
             timeContext: payload.timeContext,
-            oura: payload.oura,
             latestMeal: payload.latestMeal,
+            previousMealSuggestion: payload.previousMealSuggestion,
+            reassessmentNote: payload.reassessmentNote,
             priorNutrition: payload.priorNutrition,
-            today: payload.today,
+            todayMeals: payload.today.meals,
+            todayExercise: payload.today.exercise,
+            todayOuraActivity: payload.today.ouraActivity,
             requestedOutput: {
               currentMeal: { calories: "number", protein: "grams", carbs: "grams", fat: "grams" },
               dayTotals: { calories: "number", protein: "grams", carbs: "grams", fat: "grams" },
