@@ -27,7 +27,7 @@ export default async function handler(request, response) {
         {
           role: "system",
           content:
-            "You are a practical nutrition planning assistant. Estimate current-meal calories/protein/carbs/fat, day-so-far totals, and the next meal time/macros. Use only the supplied nutrition profile, local time, current meal, meals eaten today, today's logged exercise, and today's Oura activity summary. If reassessmentNote is present, treat it as user-supplied correction context, compare against the previous meal suggestion, and update currentMeal and dayTotals accordingly. Do not infer from sleep context or previous days because this endpoint is optimized for frequent meal logging. Make suggestions plausible for the user's day and goal, especially fat reduction or hypertrophy. If the latest meal is late evening or near bedtime, do not recommend another normal meal in 3-5 hours; prefer breakfast next or a small optional pre-bed snack only if hunger/recovery warrants it. If profile data is missing, say the guidance is rough. Return only valid JSON.",
+            "You are a practical nutrition planning assistant. Estimate current-meal calories/protein/carbs/fat, day-so-far totals, and the next meal time/macros. Use only the supplied nutrition profile, local time, current meal, meals eaten today, today's logged exercise, and today's Oura activity summary. In reassessmentMode=fresh-estimate-ignore-previous-system-estimate, make a fresh estimate from raw meal text and extracted foods only; do not treat any prior app/system macro estimates as user-provided facts. If reassessmentNote is present, treat it as user-supplied correction context, compare against the previous system estimate if provided, and update currentMeal and dayTotals accordingly. Do not infer from sleep context or previous days because this endpoint is optimized for frequent meal logging. Make suggestions plausible for the user's day and goal, especially fat reduction or hypertrophy. If the latest meal is late evening or near bedtime, do not recommend another normal meal in 3-5 hours; prefer breakfast next or a small optional pre-bed snack only if hunger/recovery warrants it. If profile data is missing, say the guidance is rough. Return only valid JSON.",
         },
         {
           role: "user",
@@ -36,7 +36,8 @@ export default async function handler(request, response) {
             localTime: payload.localTime,
             timeContext: payload.timeContext,
             latestMeal: payload.latestMeal,
-            previousMealSuggestion: payload.previousMealSuggestion,
+            reassessmentMode: payload.reassessmentMode,
+            previousSystemEstimate: payload.previousSystemEstimate,
             reassessmentNote: payload.reassessmentNote,
             priorNutrition: payload.priorNutrition,
             todayMeals: payload.today.meals,

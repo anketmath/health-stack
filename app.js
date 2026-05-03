@@ -439,6 +439,7 @@ function setupDataActions() {
 
   document.querySelector("#generateInsightsButton").addEventListener("click", generateInsights);
   document.querySelector("#chatForm").addEventListener("submit", handleChatSubmit);
+  document.querySelector("#chatActions").addEventListener("click", handleChatActionClick);
   document.querySelector("#topAskForm").addEventListener("submit", handleTopAskSubmit);
   document.querySelector("#workoutForm").addEventListener("submit", handleWorkoutSubmit);
   document.querySelector("#reminderForm").addEventListener("submit", handleReminderSubmit);
@@ -465,21 +466,29 @@ async function handleChatSubmit(event) {
   askChatQuestion(question);
 }
 
-async function askChatQuestion(question) {
-  addChatMessage("user", question);
+function handleChatActionClick(event) {
+  const button = event.target.closest("[data-chat-action]");
+  if (!button) return;
+  const action = chatAction(button.dataset.chatAction);
+  if (!action) return;
+  askChatQuestion(action.question, { actionKey: action.key, displayText: action.label });
+}
+
+async function askChatQuestion(question, options = {}) {
+  addChatMessage("user", options.displayText || question);
   const pendingId = addChatMessage("assistant", "Thinking with your recent logs...");
 
   try {
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildChatPayload(question)),
+      body: JSON.stringify(buildChatPayload(question, options.actionKey)),
     });
     if (!response.ok) throw new Error(await response.text());
     const data = await response.json();
     updateChatMessage(pendingId, data.answer || "I could not form an answer.");
   } catch (error) {
-    updateChatMessage(pendingId, `${localChatAnswer(question)}\n\nLLM endpoint status: ${friendlyApiError(error)}`);
+    updateChatMessage(pendingId, `${localChatAnswer(question, options.actionKey)}\n\nLLM endpoint status: ${friendlyApiError(error)}`);
   }
 }
 
@@ -503,11 +512,13 @@ function showView(key) {
   render();
 }
 
-function buildChatPayload(question) {
-  const contextPlan = chatContextPlan(question);
+function buildChatPayload(question, actionKey = "") {
+  const action = chatAction(actionKey);
+  const contextPlan = action?.plan || chatContextPlan(question);
   return {
     date: today(),
     question,
+    action: action ? { key: action.key, label: action.label } : null,
     profile: state.profile,
     settings: state.settings,
     contextPlan,
@@ -515,7 +526,82 @@ function buildChatPayload(question) {
     oura: contextPlan.includeOura ? compactOuraForDates(contextPlan.dates) : null,
     supplementContext: contextPlan.includeSupplements ? supplementContext(contextPlan.supplementDays) : null,
     chatHistory: state.chat.slice(-8),
-    instruction: "Answer using the supplied context plan, profile, goals, settings, and selected health logs. The app intentionally sends only the dates and categories likely needed for the question; ask for a broader range if the supplied context is too narrow. Be practical and cautious, and clearly state uncertainty.",
+    instruction: action?.instruction || "Answer using the supplied context plan, profile, goals, settings, and selected health logs. The app intentionally sends only the dates and categories likely needed for the question; ask for a broader range if the supplied context is too narrow. Be practical and cautious, and clearly state uncertainty.",
+  };
+}
+
+function chatAction(key) {
+  const todayDate = today();
+  const yesterday = previousDate(todayDate);
+  const actions = {
+    "analyze-today": {
+      key: "analyze-today",
+      label: "Analyze today",
+      question: "Analyze today.",
+      plan: chatPlan("today", [todayDate], ["all"], { includeOura: true, includeSupplements: true, supplementDays: 30 }),
+      instruction: "Analyze today so far. Summarize what is going well, risks for the rest of the day, and the next 1-3 practical actions.",
+    },
+    "analyze-yesterday": {
+      key: "analyze-yesterday",
+      label: "Analyze yesterday",
+      question: "Analyze yesterday.",
+      plan: chatPlan("yesterday", [yesterday], ["all"], { includeOura: true, includeSupplements: true, supplementDays: 30 }),
+      instruction: "Analyze yesterday as a completed day. Include meals, exercise, meditation, digital minimalism, Oura activity, and sleep/readiness when available.",
+    },
+    "last-7-days": {
+      key: "last-7-days",
+      label: "Analyze last 7 days",
+      question: "Analyze the last 7 days.",
+      plan: chatPlan("last 7 days", recentDays(7), ["all"], { includeOura: true, includeSupplements: true, supplementDays: 30 }),
+      instruction: "Analyze the last 7 days. Focus on consistency, streaks, diet/exercise/sleep patterns, and 2-4 practical suggestions.",
+    },
+    "last-30-days": {
+      key: "last-30-days",
+      label: "Analyze last 30 days",
+      question: "Analyze the last 30 days.",
+      plan: chatPlan("last 30 days", recentDays(30), ["all"], { includeOura: true, includeSupplements: true, supplementDays: 30 }),
+      instruction: "Analyze the last 30 days at a trend level. Avoid overreacting to single days; highlight durable patterns and the highest-leverage next changes.",
+    },
+    "sleep-correlations": {
+      key: "sleep-correlations",
+      label: "Find sleep correlations",
+      question: "Find sleep correlations.",
+      plan: chatPlan("last 30 days for sleep correlations", recentDays(30), ["all"], { includeOura: true, includeSupplements: true, supplementDays: 30 }),
+      instruction: "Look for possible sleep/readiness correlations over at least 14 days. Compare sleep/readiness against meal timing/macros, exercise, meditation, digital minimalism, and supplement changes. State confidence and avoid claiming causality.",
+    },
+    "nutrition-checkin": {
+      key: "nutrition-checkin",
+      label: "Nutrition check-in",
+      question: "Give me a nutrition check-in for today.",
+      plan: chatPlan("today nutrition check-in", [todayDate], ["meal", "exercise"], { includeOura: true, includeSupplements: false }),
+      instruction: "Review today's nutrition against the user's profile/goals and today's exercise/Oura activity. Estimate calories/protein and suggest what to eat next if useful.",
+    },
+    "training-review": {
+      key: "training-review",
+      label: "Training review",
+      question: "Review my recent training.",
+      plan: chatPlan("last 21 days training review", recentDays(21), ["exercise", "sleep"], { includeOura: true, includeSupplements: false }),
+      instruction: "Review recent training, recovery, volume, balance, and progression opportunities. Use Oura activity/readiness/sleep summaries when available.",
+    },
+    "suggest-workout": {
+      key: "suggest-workout",
+      label: "Suggest workout",
+      question: "Suggest a workout for today.",
+      plan: chatPlan("last 21 days workout context", recentDays(21), ["exercise", "sleep"], { includeOura: true, includeSupplements: false }),
+      instruction: "Suggest a home workout using profile goals, available equipment, familiar exercises, recent exercise load, and readiness/sleep context. Include sets, reps, rest, and suggested weights when possible.",
+    },
+  };
+  return actions[key] || null;
+}
+
+function chatPlan(label, dates, categories, options = {}) {
+  return {
+    label,
+    dates,
+    categories,
+    includeOura: Boolean(options.includeOura),
+    includeSupplements: Boolean(options.includeSupplements),
+    supplementDays: options.supplementDays || 0,
   };
 }
 
@@ -599,11 +685,12 @@ function updateChatMessage(id, text) {
   renderChat();
 }
 
-function localChatAnswer(question) {
-  const recent = entriesFromLastDays(14);
-  const byType = ["exercise", "meal", "sleep", "meditation", "social"].map((type) => `${labelFor(type)}: ${recent.filter((entry) => entry.type === type).length}`).join(", ");
+function localChatAnswer(question, actionKey = "") {
+  const plan = chatAction(actionKey)?.plan || chatContextPlan(question);
+  const scopedEntries = entriesForChatPlan(plan);
+  const byType = ["exercise", "meal", "sleep", "meditation", "social"].map((type) => `${labelFor(type)}: ${scopedEntries.filter((entry) => entry.type === type).length}`).join(", ");
   const goal = state.profile.goal ? ` Your saved goal is: ${state.profile.goal}.` : "";
-  return `I can answer more specifically once the LLM endpoint is deployed. Locally, I can see the last 14 days include ${byType}.${goal}\n\nYour question was: "${question}"`;
+  return `I can answer more specifically once the LLM endpoint is deployed. Locally, the ${plan.label} context includes ${byType}.${goal}\n\nYour question was: "${question}"`;
 }
 
 async function handleWorkoutSubmit(event) {
@@ -811,8 +898,9 @@ function renderWorkoutPanel() {
 async function generateMealSuggestion(entryId, options = {}) {
   const entry = state.entries.find((item) => item.id === entryId);
   if (!entry) return;
+  const isReassessment = Boolean(options.reassessment);
   const panel = document.querySelector("#mealSuggestionPanel");
-  panel.innerHTML = `<strong>Next meal suggestion</strong><p>${options.reassessmentNote ? "Re-assessing..." : "Generating..."}</p>`;
+  panel.innerHTML = `<strong>Next meal suggestion</strong><p>${isReassessment ? "Re-assessing..." : "Generating..."}</p>`;
 
   const payload = buildMealSuggestionPayload(entry, options);
   try {
@@ -824,27 +912,27 @@ async function generateMealSuggestion(entryId, options = {}) {
     if (!response.ok) throw new Error(await response.text());
     const data = await response.json();
     entry.mealSuggestion = data.suggestion;
-    if (options.reassessmentNote) entry.mealSuggestion.reassessmentNote = options.reassessmentNote;
+    if (isReassessment) entry.mealSuggestion.reassessment = reassessmentMeta(options);
     entry.updatedAt = new Date().toISOString();
     saveState();
     syncEntryToCloud(entry);
     renderDashboard();
     renderRecords();
     renderPayload();
-    renderMealSuggestion(data.suggestion, options.reassessmentNote ? "Re-assessed by LLM" : "Generated by LLM");
-    if (options.reassessmentNote) showToast("Meal nutrition re-assessed");
+    renderMealSuggestion(data.suggestion, isReassessment ? "Re-assessed by LLM" : "Generated by LLM");
+    if (isReassessment) showToast("Meal nutrition re-assessed");
   } catch {
     const suggestion = localMealSuggestion(payload);
     entry.mealSuggestion = suggestion;
-    if (options.reassessmentNote) entry.mealSuggestion.reassessmentNote = options.reassessmentNote;
+    if (isReassessment) entry.mealSuggestion.reassessment = reassessmentMeta(options);
     entry.updatedAt = new Date().toISOString();
     saveState();
     syncEntryToCloud(entry);
     renderDashboard();
     renderRecords();
     renderPayload();
-    renderMealSuggestion(suggestion, options.reassessmentNote ? "Local re-assessment fallback" : "Local fallback");
-    if (options.reassessmentNote) showToast("Meal nutrition re-assessed locally");
+    renderMealSuggestion(suggestion, isReassessment ? "Local re-assessment fallback" : "Local fallback");
+    if (isReassessment) showToast("Meal nutrition re-assessed locally");
   }
 }
 
@@ -852,6 +940,12 @@ function buildMealSuggestionPayload(mealEntry, options = {}) {
   const logDate = mealEntry.date || today();
   const todayEntries = state.entries.filter((entry) => entry.date === logDate).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const priorMeals = todayEntries.filter((entry) => entry.type === "meal" && entry.id !== mealEntry.id);
+  const isReassessment = Boolean(options.reassessment);
+  const hasCorrectionNote = Boolean(options.reassessmentNote);
+  const latestMeal = compactMealEntry(mealEntry, { includeSystemNutrition: !isReassessment || hasCorrectionNote });
+  const todayMeals = todayEntries
+    .filter((entry) => entry.type === "meal")
+    .map((entry) => compactMealEntry(entry, { includeSystemNutrition: entry.id !== mealEntry.id || !isReassessment || hasCorrectionNote }));
   return {
     date: logDate,
     localTime: nowTime(),
@@ -861,16 +955,25 @@ function buildMealSuggestionPayload(mealEntry, options = {}) {
       assumption: "If a meal or snack is logged around 9 PM or later, the user is likely approaching sleep and should usually not be told to eat another normal meal in 3-5 hours.",
     },
     profile: nutritionProfile(),
-    latestMeal: compactMealEntry(mealEntry),
-    previousMealSuggestion: compactMealSuggestion(mealEntry.mealSuggestion),
+    latestMeal,
+    previousSystemEstimate: hasCorrectionNote ? compactMealSuggestion(mealEntry.mealSuggestion) : null,
+    reassessmentMode: isReassessment ? (hasCorrectionNote ? "adjust-with-user-note" : "fresh-estimate-ignore-previous-system-estimate") : "initial-estimate",
     reassessmentNote: options.reassessmentNote || "",
     priorNutrition: nutritionTotals(priorMeals),
     today: {
-      meals: todayEntries.filter((entry) => entry.type === "meal").map(compactMealEntry),
+      meals: todayMeals,
       exercise: todayEntries.filter((entry) => entry.type === "exercise").map(compactExerciseEntry),
       ouraActivity: ouraActivitySummaryForDate(logDate),
     },
-    instruction: "Suggest when to eat the next meal and rough protein, carbs, and fats using only the nutrition profile, current local time, today's meals, the current meal, today's logged exercise, and today's Oura activity summary. Do not use prior days or sleep context for this common meal action. If reassessmentNote is present, treat this as a correction request and update the current meal and day totals using that extra information. If it is late evening, consider sleep timing and avoid suggesting another normal meal before bed unless there is a clear reason.",
+    instruction: "Suggest when to eat the next meal and rough protein, carbs, and fats using only the nutrition profile, current local time, today's meals, the current meal, today's logged exercise, and today's Oura activity summary. Do not use prior days or sleep context for this common meal action. If reassessmentMode is fresh-estimate-ignore-previous-system-estimate, estimate from the raw meal text and extracted food details only; do not treat prior app/system macro estimates as user-provided facts. If reassessmentNote is present, treat it as correction context and update the current meal and day totals using that extra information. If it is late evening, consider sleep timing and avoid suggesting another normal meal before bed unless there is a clear reason.",
+  };
+}
+
+function reassessmentMeta(options = {}) {
+  return {
+    note: options.reassessmentNote || "",
+    mode: options.reassessmentNote ? "adjusted with user note" : "fresh estimate without prior system macros",
+    at: new Date().toISOString(),
   };
 }
 
@@ -888,26 +991,31 @@ function nutritionProfile() {
   };
 }
 
-function compactMealEntry(entry) {
-  return {
+function compactMealEntry(entry, options = {}) {
+  const includeSystemNutrition = options.includeSystemNutrition !== false;
+  const compact = {
     id: entry.id,
     date: entry.date,
     createdAt: entry.createdAt,
     rawText: truncateText(entry.rawText, 260),
-    macros: macrosForMeal(entry),
-    extraction: compactMealExtraction(entry.extraction),
-    mealSuggestion: compactMealSuggestion(entry.mealSuggestion),
+    extraction: compactMealExtraction(entry.extraction, { includeSystemNutrition }),
   };
+  if (includeSystemNutrition) {
+    compact.macros = macrosForMeal(entry);
+    compact.mealSuggestion = compactMealSuggestion(entry.mealSuggestion);
+  }
+  return compact;
 }
 
-function compactMealExtraction(extraction) {
+function compactMealExtraction(extraction, options = {}) {
   if (!extraction) return null;
-  return {
+  const compact = {
     summary: truncateText(extraction.summary, 180),
     foods: (extraction.foods || []).slice(0, 10),
     mealTime: extraction.mealTime || extraction.time || null,
-    nutrition: normalizeMacros(extraction.nutrition) || normalizeMacros(extraction.macros) || normalizeMacros(extraction.currentMeal),
   };
+  if (options.includeSystemNutrition !== false) compact.nutrition = normalizeMacros(extraction.nutrition) || normalizeMacros(extraction.macros) || normalizeMacros(extraction.currentMeal);
+  return compact;
 }
 
 function compactExerciseEntry(entry) {
@@ -1488,7 +1596,7 @@ function renderDashboard() {
 
   document.querySelector("#dashboardGrid").innerHTML = `
     ${profileIsSparse() ? renderDashboardNotice() : ""}
-    <section class="scorecard-grid">${cards.map(renderScorecard).join("")}</section>`;
+    <section class="scorecard-grid">${sortDashboardCards(cards).map(renderScorecard).join("")}</section>`;
   ensureDietTargetForDate(selectedDashboardDate);
 }
 
@@ -1690,7 +1798,7 @@ function sortDashboardCards(cards) {
     .map((card, index) => ({ ...card, index }))
     .sort((a, b) => {
       if (a.noStreak !== b.noStreak) return a.noStreak ? 1 : -1;
-      return (b.streak || 0) - (a.streak || 0) || Number(b.status === "green") - Number(a.status === "green") || a.index - b.index;
+      return (b.streak || 0) - (a.streak || 0) || a.index - b.index;
     });
 }
 
@@ -1887,7 +1995,7 @@ async function handleMealReassessmentSubmit(event) {
   if (!entry || entry.type !== "meal") return;
   const note = Object.fromEntries(new FormData(event.target).entries()).note?.trim() || "";
   showToast(note ? "Re-assessing meal with your note..." : "Running meal nutrition estimate...");
-  await generateMealSuggestion(entry.id, { reassessmentNote: note });
+  await generateMealSuggestion(entry.id, { reassessment: true, reassessmentNote: note });
 }
 
 function editedFieldsFor(entry, data) {

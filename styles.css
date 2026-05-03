@@ -840,6 +840,26 @@ button[type="submit"] {
   gap: 16px;
 }
 
+.chat-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.chat-actions button {
+  min-height: 48px;
+  padding: 10px 12px;
+  text-align: left;
+  background: #f7f4ee;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.chat-actions button:hover {
+  border-color: var(--green);
+  background: #eef5f1;
+}
+
 .chat-messages {
   display: grid;
   gap: 12px;
@@ -1087,6 +1107,7 @@ pre {
   .log-grid,
   .dashboard-card-row,
   .dashboard-card-row-outcomes,
+  .chat-actions,
   .top-ask,
   .workout-row,
   .two-col,

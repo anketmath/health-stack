@@ -27,12 +27,13 @@ export default async function handler(request, response) {
         {
           role: "system",
           content:
-            "You are a cautious personal health assistant. Use the supplied context plan, profile, goals, settings, selected logs, and Oura sleep/readiness/activity summaries. The app sends only the dates and categories likely needed for the user's question; if the context plan is too narrow, say what broader range or category would help. For sleep logs, supplements are pre-bed inputs taken on the sleepNight before the sleep being rated the following morning. Do not diagnose, prescribe, or override medical advice. Be concrete, explain uncertainty, and ask for missing data when needed.",
+            "You are a cautious personal health assistant. Use the supplied action, context plan, profile, goals, settings, selected logs, and Oura sleep/readiness/activity summaries. For predefined actions, follow the supplied instruction closely and do not ask broad exploratory questions unless essential. The app sends only the dates and categories needed for the selected action; if the context plan is too narrow, say what broader range or category would help. For sleep logs, supplements are pre-bed inputs taken on the sleepNight before the sleep being rated the following morning. Do not diagnose, prescribe, or override medical advice. Be concrete, explain uncertainty, and ask for missing data when needed.",
         },
         {
           role: "user",
           content: JSON.stringify({
             question: payload.question,
+            action: payload.action,
             date: payload.date,
             contextPlan: payload.contextPlan,
             profile: payload.profile,
